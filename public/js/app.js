@@ -31,17 +31,35 @@
         screen: 'overview', search: '', statusFilter: [], typeFilter: '', locationFilter: '',
         sortCol: 'assetTag', sortDir: 'asc', page: 1, selectedId: null, drawerOpen: false,
         addOpen: false, form: freshForm(), formErrors: {},
+        currentUser: null,
+        authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authSubmitting: false,
+        mfaForm: { token: '' }, mfaError: '',
+        mfaEnroll: { qr: '', manualKey: '' },
+        selectedIds: [],
+        deprecatedPage: 1,
+        csvImport: { open: false, step: 'pick', fileName: '', rows: [] },
+        users: [], userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
       };
       this._toastTimer = null;
     }
 
-    init() {
+    async init() {
       this.render();
-      // Simulate the brief "loading register" moment from the original design.
-      setTimeout(() => {
-        const assets = generateAssets(2150, 42);
-        this.setState({ assets, ready: true });
-      }, 350);
+      Api.onUnauthorized = () => {
+        if (this.state.currentUser) this.setState({ currentUser: null, assets: [], ready: false, authScreen: 'login' });
+      };
+      try {
+        const me = await Api.get('/api/me');
+        this.setState({ currentUser: me });
+        await this.loadAssets();
+      } catch (e) {
+        this.setState({ currentUser: null, ready: false });
+      }
+    }
+
+    async loadAssets() {
+      const assets = await Api.get('/api/assets');
+      this.setState({ assets, ready: true });
     }
 
     setState(patch) {
@@ -62,63 +80,154 @@
     // -- actions -------------------------------------------------------
 
     setScreen(screen) { this.setState({ screen, drawerOpen: false }); }
-    setSearch(value) { this.setState({ search: value, page: 1 }); }
+    setSearch(value) { this.setState({ search: value, page: 1, selectedIds: [] }); }
     toggleStatusFilter(status) {
       this.setState((s) => {
         const next = s.statusFilter.includes(status) ? s.statusFilter.filter((x) => x !== status) : [...s.statusFilter, status];
-        return { statusFilter: next, page: 1 };
+        return { statusFilter: next, page: 1, selectedIds: [] };
       });
     }
-    setTypeFilter(value) { this.setState({ typeFilter: value, page: 1 }); }
-    setLocationFilter(value) { this.setState({ locationFilter: value, page: 1 }); }
+    setTypeFilter(value) { this.setState({ typeFilter: value, page: 1, selectedIds: [] }); }
+    setLocationFilter(value) { this.setState({ locationFilter: value, page: 1, selectedIds: [] }); }
     setSort(col) {
       this.setState((s) => ({ sortCol: col, sortDir: s.sortCol === col && s.sortDir === 'asc' ? 'desc' : 'asc' }));
     }
-    setPage(page) { this.setState({ page }); }
+    setPage(page) { this.setState({ page, selectedIds: [] }); }
+    toggleSelectRow(id) {
+      this.setState((s) => ({
+        selectedIds: s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id],
+      }));
+    }
+    toggleSelectAll() {
+      const vm = this.computeViewModel();
+      const pageIds = vm.rows.map((r) => r.id);
+      const allSelected = pageIds.length > 0 && pageIds.every((id) => this.state.selectedIds.includes(id));
+      this.setState((s) => ({
+        selectedIds: allSelected ? s.selectedIds.filter((id) => !pageIds.includes(id)) : Array.from(new Set([...s.selectedIds, ...pageIds])),
+      }));
+    }
     openDetail(id) { this.setState({ selectedId: id, drawerOpen: true }); }
     closeDetail() { this.setState({ drawerOpen: false }); }
     openAdd() { this.setState({ addOpen: true, formErrors: {} }); }
     closeAdd() { this.setState({ addOpen: false }); }
     updateFormField(field, value) { this.setState((s) => ({ form: { ...s.form, [field]: value } })); }
+    updateAuthField(field, value) { this.setState((s) => ({ authForm: { ...s.authForm, [field]: value } })); }
+    updateMfaField(field, value) { this.setState((s) => ({ mfaForm: { ...s.mfaForm, [field]: value } })); }
 
-    mutateAsset(id, fn) {
-      this.setState((s) => ({ assets: s.assets.map((asset) => (asset.id === id ? fn({ ...asset, history: [...asset.history] }) : asset)) }));
+    async submitLogin() {
+      const { email, password } = this.state.authForm;
+      if (!email || !password) { this.setState({ authError: 'Email and password are required' }); return; }
+      this.setState({ authSubmitting: true, authError: '' });
+      try {
+        const res = await Api.post('/api/auth/login', { email, password });
+        if (res.status === 'mfa_verify') {
+          this.setState({ authScreen: 'mfa-verify', authSubmitting: false, mfaForm: { token: '' }, mfaError: '' });
+        } else if (res.status === 'mfa_enroll') {
+          this.setState({ authScreen: 'mfa-enroll', authSubmitting: false, mfaEnroll: { qr: res.qr, manualKey: res.manualKey }, mfaForm: { token: '' }, mfaError: '' });
+        }
+      } catch (e) {
+        this.setState({ authError: e.status === 429 ? 'Too many attempts — try again later' : 'Incorrect email or password', authSubmitting: false });
+      }
     }
-    checkInOut(id) {
+
+    async submitMfaVerify() {
+      const { token } = this.state.mfaForm;
+      if (!token) { this.setState({ mfaError: 'Enter the 6-digit code' }); return; }
+      this.setState({ authSubmitting: true, mfaError: '' });
+      try {
+        const res = await Api.post('/api/auth/mfa/verify', { token });
+        await this._onAuthSuccess(res.user);
+      } catch (e) {
+        this.setState({ mfaError: e.status === 429 ? 'Too many attempts — try again later' : 'Invalid code', authSubmitting: false });
+      }
+    }
+
+    async submitMfaEnrollVerify() {
+      const { token } = this.state.mfaForm;
+      if (!token) { this.setState({ mfaError: 'Enter the 6-digit code' }); return; }
+      this.setState({ authSubmitting: true, mfaError: '' });
+      try {
+        const res = await Api.post('/api/auth/mfa/enroll/verify', { token });
+        await this._onAuthSuccess(res.user);
+      } catch (e) {
+        this.setState({ mfaError: e.status === 429 ? 'Too many attempts — try again later' : 'Invalid code', authSubmitting: false });
+      }
+    }
+
+    async _onAuthSuccess(user) {
+      this.setState({
+        currentUser: user, authSubmitting: false, authScreen: 'login',
+        authForm: { email: '', password: '' }, mfaForm: { token: '' }, authError: '', mfaError: '',
+      });
+      await this.loadAssets();
+    }
+
+    backToAuth() {
+      this.setState({ authScreen: 'login', mfaForm: { token: '' }, mfaError: '' });
+    }
+
+    async logout() {
+      try { await Api.post('/api/auth/logout'); } catch (e) { /* ignore */ }
+      this.setState({
+        currentUser: null, assets: [], ready: false, screen: 'overview',
+        authScreen: 'login', authForm: { email: '', password: '' }, authError: '',
+        mfaForm: { token: '' }, mfaError: '',
+      });
+    }
+
+    applyAssetUpdate(updated) {
+      this.setState((s) => ({ assets: s.assets.map((a) => (a.id === updated.id ? updated : a)) }));
+    }
+
+    async checkInOut(id) {
       const asset = this.state.assets.find((x) => x.id === id);
       if (!asset) return;
-      if (asset.status === 'In Use') { this.mutateAsset(id, (a) => ({ ...a, status: 'In Stock', history: [...a.history, { date: TODAY_ISO, text: 'Checked in to stock' }] })); this.showToast(`${id} checked in`); }
-      else if (asset.status === 'In Stock') { this.mutateAsset(id, (a) => ({ ...a, status: 'In Use', history: [...a.history, { date: TODAY_ISO, text: 'Checked out from stock' }] })); this.showToast(`${id} checked out`); }
-      else if (asset.status === 'In Repair') { this.mutateAsset(id, (a) => ({ ...a, status: 'In Use', history: [...a.history, { date: TODAY_ISO, text: 'Repair complete — returned to service' }] })); this.showToast(`${id} marked repaired`); }
+      const msg = asset.status === 'In Use' ? `${id} checked in`
+        : asset.status === 'In Stock' ? `${id} checked out`
+        : asset.status === 'In Repair' ? `${id} marked repaired`
+        : null;
+      try {
+        const updated = await Api.post(`/api/assets/${encodeURIComponent(id)}/check-in-out`);
+        this.applyAssetUpdate(updated);
+        if (msg) this.showToast(msg);
+      } catch (e) {
+        this.showToast('Action failed');
+      }
     }
-    flagRepair(id) {
-      this.mutateAsset(id, (a) => ({ ...a, status: 'In Repair', history: [...a.history, { date: TODAY_ISO, text: 'Flagged for maintenance' }] }));
-      this.showToast(`${id} flagged for repair`);
+    async flagRepair(id) {
+      try {
+        const updated = await Api.post(`/api/assets/${encodeURIComponent(id)}/flag-repair`);
+        this.applyAssetUpdate(updated);
+        this.showToast(`${id} flagged for repair`);
+      } catch (e) {
+        this.showToast('Action failed');
+      }
     }
-    retireAsset(id) {
-      this.mutateAsset(id, (a) => ({ ...a, status: 'Retired', dateRetired: TODAY_ISO, deviceBlocked: true, history: [...a.history, { date: TODAY_ISO, text: 'Asset retired and decommissioned' }] }));
-      this.showToast(`${id} retired`);
+    async retireAsset(id) {
+      try {
+        const updated = await Api.post(`/api/assets/${encodeURIComponent(id)}/retire`);
+        this.applyAssetUpdate(updated);
+        this.showToast(`${id} retired`);
+      } catch (e) {
+        this.showToast('Action failed');
+      }
     }
 
-    submitAdd() {
+    async submitAdd() {
       const form = this.state.form;
       const errors = {};
       if (!form.assetTag.trim()) errors.assetTag = 'Asset tag is required';
-      else if (this.state.assets.some((a) => a.id === form.assetTag.trim())) errors.assetTag = 'Asset tag already exists';
       if (!form.itemType) errors.itemType = 'Required';
       if (!form.model.trim()) errors.model = 'Model is required';
       if (Object.keys(errors).length) { this.setState({ formErrors: errors }); return; }
-      const newAsset = {
-        id: form.assetTag.trim(), assetTag: form.assetTag.trim(), itemType: form.itemType, model: form.model.trim(),
-        serialNumber: form.serialNumber.trim() || '—', expressTag: '', macAddress: '', imei: '', wsusGroup: '',
-        telephoneNumber: '', poNumber: form.poNumber.trim() || '—', deviceBlocked: false, location: form.location,
-        firstName: form.firstName.trim(), lastName: form.lastName.trim(), dateAcquired: TODAY_ISO, dateDeployed: form.firstName.trim() ? TODAY_ISO : '',
-        returnDate: '', dateRetired: '', notes: '', agreementSigned: false, supplier: form.supplier,
-        status: form.firstName.trim() ? 'In Use' : 'In Stock',
-        history: [{ date: TODAY_ISO, text: `Received from ${form.supplier} — added to register` }],
-      };
-      this.setState((s) => ({ assets: [newAsset, ...s.assets], addOpen: false, page: 1, form: freshForm(), formErrors: {} }));
-      this.showToast(`Asset ${newAsset.assetTag} added`);
+      try {
+        const created = await Api.post('/api/assets', form);
+        this.setState((s) => ({ assets: [created, ...s.assets], addOpen: false, page: 1, form: freshForm(), formErrors: {} }));
+        this.showToast(`Asset ${created.assetTag} added`);
+      } catch (e) {
+        if (e.status === 400 && e.data && e.data.fields) this.setState({ formErrors: e.data.fields });
+        else this.showToast('Failed to add asset');
+      }
     }
 
     exportCsv() {
@@ -131,6 +240,159 @@
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
       this.showToast('CSV export started');
+    }
+
+    setDeprecatedPage(page) { this.setState({ deprecatedPage: page }); }
+
+    async goUsers() {
+      this.setState({ screen: 'users', drawerOpen: false });
+      try {
+        const users = await Api.get('/api/users');
+        this.setState({ users });
+      } catch (e) {
+        this.showToast('Failed to load users');
+      }
+    }
+
+    updateUserField(field, value) { this.setState((s) => ({ userForm: { ...s.userForm, [field]: value } })); }
+
+    async submitCreateUser() {
+      const form = this.state.userForm;
+      const errors = {};
+      if (!form.email.trim()) errors.email = 'Email is required';
+      const pwErrors = validatePasswordPolicy(form.password);
+      if (pwErrors.length) errors.password = pwErrors.join('; ');
+      if (Object.keys(errors).length) { this.setState({ userFormErrors: errors }); return; }
+      try {
+        const created = await Api.post('/api/users', form);
+        this.setState((s) => ({
+          users: [...s.users, created].sort((a, b) => (a.email < b.email ? -1 : 1)),
+          userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
+        }));
+        this.showToast(`User ${created.email} created`);
+      } catch (e) {
+        if (e.status === 400 && e.data && e.data.fields) this.setState({ userFormErrors: e.data.fields });
+        else this.showToast('Failed to create user');
+      }
+    }
+
+    async changeUserRole(id, role) {
+      try {
+        const updated = await Api.patch(`/api/users/${id}`, { role });
+        this.setState((s) => ({ users: s.users.map((u) => (u.id === updated.id ? updated : u)) }));
+        this.showToast(`Role updated for ${updated.email}`);
+      } catch (e) {
+        this.showToast('Failed to update role');
+      }
+    }
+
+    async toggleUserActive(id) {
+      const user = this.state.users.find((u) => u.id === Number(id));
+      if (!user) return;
+      try {
+        const updated = await Api.patch(`/api/users/${id}`, { active: !user.active });
+        this.setState((s) => ({ users: s.users.map((u) => (u.id === updated.id ? updated : u)) }));
+        this.showToast(`${updated.email} ${updated.active ? 'enabled' : 'disabled'}`);
+      } catch (e) {
+        this.showToast('Failed to update user');
+      }
+    }
+
+    async resetUserMfa(id) {
+      try {
+        const updated = await Api.patch(`/api/users/${id}`, { resetMfa: true });
+        this.setState((s) => ({ users: s.users.map((u) => (u.id === updated.id ? updated : u)) }));
+        this.showToast(`MFA reset for ${updated.email}`);
+      } catch (e) {
+        this.showToast('Failed to reset MFA');
+      }
+    }
+
+    exportDeprecatedCsv() {
+      const rows = this.state.assets.filter((a) => a.status === 'Retired');
+      const csv = buildCsv(rows);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = 'deprecated-assets.csv';
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      this.showToast('Deprecated CSV export started');
+    }
+
+    openImport() { this.setState({ csvImport: { open: true, step: 'pick', fileName: '', rows: [] } }); }
+    closeImport() { this.setState({ csvImport: { open: false, step: 'pick', fileName: '', rows: [] } }); }
+
+    validateImportRow(row, existingTags, seenTags) {
+      const errors = [];
+      const tag = (row.assetTag || '').trim();
+      if (!tag) errors.push('Asset tag is required');
+      else if (existingTags.has(tag)) errors.push('Asset tag already exists');
+      else if (seenTags.has(tag)) errors.push('Duplicate asset tag in file');
+      if (!(row.itemType || '').trim()) errors.push('Item type is required');
+      if (!(row.model || '').trim()) errors.push('Model is required');
+      return errors;
+    }
+
+    handleCsvFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const parsed = parseCsv(String(reader.result || ''));
+        const existingTags = new Set(this.state.assets.map((a) => a.id));
+        const seenTags = new Set();
+        const rows = parsed.map((row) => {
+          const errors = this.validateImportRow(row, existingTags, seenTags);
+          const tag = (row.assetTag || '').trim();
+          if (!errors.length) seenTags.add(tag);
+          return { ...row, _errors: errors };
+        });
+        this.setState({ csvImport: { open: true, step: 'preview', fileName: file.name, rows } });
+      };
+      reader.readAsText(file);
+    }
+
+    async confirmImport() {
+      const valid = this.state.csvImport.rows.filter((r) => !r._errors.length);
+      if (!valid.length) { this.showToast('No valid rows to import'); return; }
+      try {
+        const res = await Api.post('/api/assets/import', { rows: valid });
+        await this.loadAssets();
+        this.closeImport();
+        const skippedCount = res.skipped ? res.skipped.length : 0;
+        this.showToast(`Imported ${res.inserted} assets${skippedCount ? `, ${skippedCount} skipped` : ''}`);
+      } catch (e) {
+        this.showToast('Import failed');
+      }
+    }
+
+    async bulkAction(action) {
+      const ids = this.state.selectedIds;
+      if (!ids.length) return;
+
+      if (action === 'export') {
+        const rows = this.state.assets.filter((a) => ids.includes(a.id));
+        const csv = buildCsv(rows);
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = 'asset-register-selected.csv';
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        this.showToast(`Exported ${ids.length} assets`);
+        return;
+      }
+
+      try {
+        const { updated } = await Api.post('/api/assets/bulk', { ids, action });
+        this.setState((s) => ({
+          assets: s.assets.map((a) => updated.find((u) => u.id === a.id) || a),
+          selectedIds: [],
+        }));
+        this.showToast(`${updated.length} assets updated`);
+      } catch (e) {
+        this.showToast('Bulk action failed');
+      }
     }
 
     getFiltered() {
@@ -174,6 +436,7 @@
         location: asset.location, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
         deployedStr: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—',
+        selected: st.selectedIds.includes(asset.id),
       }));
 
       const kpis = [
@@ -210,8 +473,30 @@
       const typeOptions = ['', ...ITEM_TYPES].map((t) => ({ value: t, label: t || 'All types' }));
       const locationOptions = ['', ...LOCATIONS].map((l) => ({ value: l, label: l || 'All locations' }));
 
+      const deprecatedAssets = all.filter((a) => a.status === 'Retired');
+      const depPct = (count) => (deprecatedAssets.length ? Math.round((count / deprecatedAssets.length) * 100) : 0);
+      const deprecatedTypeBars = groupCounts(deprecatedAssets, 'itemType').map((g) => ({ ...g, pct: depPct(g.count) }));
+      const deprecatedLocationBars = groupCounts(deprecatedAssets, 'location').map((g) => ({ ...g, pct: depPct(g.count) }));
+      const deprecatedSupplierBars = groupCounts(deprecatedAssets, 'supplier').map((g) => ({ ...g, pct: depPct(g.count) }));
+      const deprecatedByMonth = groupCounts(
+        deprecatedAssets.map((a) => ({ retiredMonth: a.dateRetired ? a.dateRetired.slice(0, 7) : 'Unknown' })),
+        'retiredMonth'
+      ).sort((x, y) => (x.label < y.label ? -1 : 1)).map((g) => ({ ...g, pct: depPct(g.count) }));
+
+      const deprecatedTotalPages = Math.max(1, Math.ceil(deprecatedAssets.length / PAGE_SIZE));
+      const deprecatedPage = Math.min(st.deprecatedPage, deprecatedTotalPages);
+      const deprecatedRows = deprecatedAssets
+        .slice((deprecatedPage - 1) * PAGE_SIZE, deprecatedPage * PAGE_SIZE)
+        .map((asset) => ({
+          id: asset.id, assetTag: asset.assetTag, itemType: asset.itemType, model: asset.model,
+          location: asset.location, dateRetiredStr: asset.dateRetired ? formatDate(asset.dateRetired) : '—',
+        }));
+
       return {
         ready: true, toast: st.toast,
+        currentUserEmail: st.currentUser ? st.currentUser.email : '',
+        currentUserLabel: st.currentUser ? st.currentUser.email.slice(0, 2).toUpperCase() : '',
+        isAdmin: !!(st.currentUser && st.currentUser.role === 'admin'),
         screen: st.screen,
         kpis, typeBars, locationBars, supplierBars, donutSegs,
         donutTotal: summary.total.toLocaleString(),
@@ -221,6 +506,8 @@
         typeFilter: st.typeFilter, typeOptions,
         locationFilter: st.locationFilter, locationOptions,
         rows,
+        selectedCount: st.selectedIds.length,
+        allPageSelected: rows.length > 0 && rows.every((r) => r.selected),
         resultCount: filtered.length,
         rangeStart: filtered.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1,
         rangeEnd: Math.min(page * PAGE_SIZE, filtered.length),
@@ -236,12 +523,18 @@
           { label: 'Pending returns', value: summary.pendingReturnCount },
           { label: 'Unsigned agreements', value: summary.unsignedCount },
         ],
+        deprecatedCount: deprecatedAssets.length,
+        deprecatedTypeBars, deprecatedLocationBars, deprecatedSupplierBars, deprecatedByMonth,
+        deprecatedRows, deprecatedPage, deprecatedTotalPages,
+        csvImport: st.csvImport,
+        users: st.users, userForm: st.userForm, userFormErrors: st.userFormErrors,
       };
     }
 
     buildDetail(id) {
       const asset = this.state.assets.find((a) => a.id === id);
       if (!asset) return null;
+      const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
       const sections = [
         { title: 'Identification', fields: [
           { label: 'Asset Tag', value: asset.assetTag }, { label: 'Item Type', value: asset.itemType }, { label: 'Model', value: asset.model },
@@ -265,13 +558,13 @@
       if (asset.status === 'In Use') {
         actions.push({ act: 'checkInOut', label: 'Check In', color: '#E8EDF3', border: '#2E3846' });
         actions.push({ act: 'flagRepair', label: 'Flag for Repair', color: '#F2B84B', border: '#F2B84B' });
-        actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
+        if (isAdmin) actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
       } else if (asset.status === 'In Stock') {
         actions.push({ act: 'checkInOut', label: 'Check Out', color: '#E8EDF3', border: '#2E3846' });
-        actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
+        if (isAdmin) actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
       } else if (asset.status === 'In Repair') {
         actions.push({ act: 'checkInOut', label: 'Mark Repaired', color: '#34E2A0', border: '#34E2A0' });
-        actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
+        if (isAdmin) actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
       }
       return {
         id: asset.id, assetTag: asset.assetTag, status: asset.status,
@@ -285,8 +578,12 @@
 
     render() {
       const focusInfo = this._captureFocus();
-      const vm = this.computeViewModel();
-      root.innerHTML = vm.ready ? renderShell(vm) : `<div class="app-loading">Loading register…</div>`;
+      if (!this.state.currentUser) {
+        root.innerHTML = renderAuthShell(this.state);
+      } else {
+        const vm = this.computeViewModel();
+        root.innerHTML = vm.ready ? renderShell(vm) : `<div class="app-loading">Loading register…</div>`;
+      }
       this._bindEvents();
       this._restoreFocus(focusInfo);
     }
@@ -309,6 +606,9 @@
     }
 
     _bindEvents() {
+      const fileInput = document.getElementById('csvFileInput');
+      if (fileInput) fileInput.onchange = (e) => this.handleCsvFile(e.target.files[0]);
+
       root.onclick = (e) => {
         const el = e.target.closest('[data-act]');
         if (!el) return;
@@ -318,6 +618,14 @@
           case 'goOverview': this.setScreen('overview'); break;
           case 'goAssets': this.setScreen('assets'); break;
           case 'goReports': this.setScreen('reports'); break;
+          case 'goDeprecated': this.setScreen('deprecated'); break;
+          case 'exportDeprecatedCsv': this.exportDeprecatedCsv(); break;
+          case 'prevDeprecatedPage': this.setDeprecatedPage(Math.max(1, this.state.deprecatedPage - 1)); break;
+          case 'nextDeprecatedPage': {
+            const vm = this.computeViewModel();
+            this.setDeprecatedPage(Math.min(vm.deprecatedTotalPages, this.state.deprecatedPage + 1));
+            break;
+          }
           case 'openAdd': this.openAdd(); break;
           case 'closeAdd': this.closeAdd(); break;
           case 'closeDetail': this.closeDetail(); break;
@@ -337,6 +645,25 @@
           case 'flagRepair': this.flagRepair(id); break;
           case 'retireAsset': this.retireAsset(id); break;
           case 'submitAdd': this.submitAdd(); break;
+          case 'submitLogin': this.submitLogin(); break;
+          case 'submitMfaVerify': this.submitMfaVerify(); break;
+          case 'submitMfaEnrollVerify': this.submitMfaEnrollVerify(); break;
+          case 'backToAuth': this.backToAuth(); break;
+          case 'logout': this.logout(); break;
+          case 'toggleSelectRow': this.toggleSelectRow(id); break;
+          case 'toggleSelectAll': this.toggleSelectAll(); break;
+          case 'bulkCheckInOut': this.bulkAction('check-in-out'); break;
+          case 'bulkFlagRepair': this.bulkAction('flag-repair'); break;
+          case 'bulkRetire': this.bulkAction('retire'); break;
+          case 'bulkExport': this.bulkAction('export'); break;
+          case 'clearSelection': this.setState({ selectedIds: [] }); break;
+          case 'openImport': this.openImport(); break;
+          case 'closeImport': this.closeImport(); break;
+          case 'confirmImport': this.confirmImport(); break;
+          case 'goUsers': this.goUsers(); break;
+          case 'submitCreateUser': this.submitCreateUser(); break;
+          case 'toggleUserActive': this.toggleUserActive(id); break;
+          case 'resetUserMfa': this.resetUserMfa(id); break;
           case 'noop': /* clicks on the drawer/modal panel itself: absorb here so they
                           don't fall through to the backdrop's close handler */ break;
           default: break;
@@ -349,6 +676,9 @@
         if (!bind) return;
         if (bind === 'search') this.setSearch(el.value);
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
+        else if (bind.startsWith('authForm.')) this.updateAuthField(bind.slice(9), el.value);
+        else if (bind.startsWith('mfaForm.')) this.updateMfaField(bind.slice(8), el.value);
+        else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
       };
 
       root.onchange = (e) => {
@@ -358,6 +688,8 @@
         if (bind === 'typeFilter') this.setTypeFilter(el.value);
         else if (bind === 'locationFilter') this.setLocationFilter(el.value);
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
+        else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
+        else if (bind.startsWith('userRole.')) this.changeUserRole(bind.slice(9), el.value);
       };
     }
   }
@@ -365,6 +697,73 @@
   /* ------------------------------------------------------------------ *
    * Pure render helpers — build HTML strings from the view model.       *
    * ------------------------------------------------------------------ */
+
+  function renderAuthShell(state) {
+    let body;
+    if (state.authScreen === 'mfa-verify') body = renderMfaVerify(state);
+    else if (state.authScreen === 'mfa-enroll') body = renderMfaEnroll(state);
+    else body = renderLogin(state);
+    return `
+      <div class="auth-shell">
+        <div class="auth-card">
+          <div class="auth-brand">
+            <div class="brand-badge">R</div>
+            <div class="brand-title">Asset Register</div>
+          </div>
+          ${body}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderLogin(state) {
+    const f = state.authForm;
+    return `
+      <div class="auth-title">Sign in</div>
+      ${state.authError ? `<div class="auth-error">${escapeHtml(state.authError)}</div>` : ''}
+      <div class="form-group">
+        <div class="form-label">Email</div>
+        <input class="form-input" type="email" data-bind="authForm.email" value="${escapeHtml(f.email)}" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <div class="form-label">Password</div>
+        <input class="form-input" type="password" data-bind="authForm.password" value="${escapeHtml(f.password)}" autocomplete="current-password">
+      </div>
+      <button class="btn-submit" style="width:100%;" data-act="submitLogin" ${state.authSubmitting ? 'disabled' : ''}>${state.authSubmitting ? 'Signing in…' : 'Sign in'}</button>
+    `;
+  }
+
+  function renderMfaVerify(state) {
+    const f = state.mfaForm;
+    return `
+      <div class="auth-title">Enter your authenticator code</div>
+      ${state.mfaError ? `<div class="auth-error">${escapeHtml(state.mfaError)}</div>` : ''}
+      <div class="form-group">
+        <div class="form-label">6-digit code</div>
+        <input class="form-input mono" type="text" inputmode="numeric" maxlength="6" data-bind="mfaForm.token" value="${escapeHtml(f.token)}" autocomplete="one-time-code">
+      </div>
+      <button class="btn-submit" style="width:100%;" data-act="submitMfaVerify" ${state.authSubmitting ? 'disabled' : ''}>${state.authSubmitting ? 'Verifying…' : 'Verify'}</button>
+      <div class="auth-back" data-act="backToAuth">&larr; Back</div>
+    `;
+  }
+
+  function renderMfaEnroll(state) {
+    const f = state.mfaForm;
+    const enroll = state.mfaEnroll;
+    return `
+      <div class="auth-title">Set up two-factor authentication</div>
+      <div class="auth-hint">Scan this QR code with an authenticator app (Google Authenticator, Authy, etc.), then enter the 6-digit code it shows.</div>
+      <div class="auth-qr-wrap"><img src="${enroll.qr}" width="180" height="180" alt="MFA QR code"></div>
+      <div class="auth-manual-key">Manual key: ${escapeHtml(enroll.manualKey)}</div>
+      ${state.mfaError ? `<div class="auth-error">${escapeHtml(state.mfaError)}</div>` : ''}
+      <div class="form-group">
+        <div class="form-label">6-digit code</div>
+        <input class="form-input mono" type="text" inputmode="numeric" maxlength="6" data-bind="mfaForm.token" value="${escapeHtml(f.token)}" autocomplete="one-time-code">
+      </div>
+      <button class="btn-submit" style="width:100%;" data-act="submitMfaEnrollVerify" ${state.authSubmitting ? 'disabled' : ''}>${state.authSubmitting ? 'Verifying…' : 'Confirm & Enable'}</button>
+      <div class="auth-back" data-act="backToAuth">&larr; Back</div>
+    `;
+  }
 
   function renderShell(vm) {
     return `
@@ -376,9 +775,12 @@
             ${vm.screen === 'overview' ? renderOverview(vm) : ''}
             ${vm.screen === 'assets' ? renderAssets(vm) : ''}
             ${vm.screen === 'reports' ? renderReports(vm) : ''}
+            ${vm.screen === 'deprecated' ? renderDeprecated(vm) : ''}
+            ${vm.screen === 'users' ? renderUsers(vm) : ''}
           </div>
           ${vm.drawerOpen && vm.selected ? renderDrawer(vm.selected) : ''}
           ${vm.addOpen ? renderAddModal(vm.form, vm.formErrors) : ''}
+          ${vm.csvImport.open ? renderImportModal(vm.csvImport) : ''}
         </div>
       </div>
       ${vm.toast ? `<div class="toast">${escapeHtml(vm.toast.msg)}</div>` : ''}
@@ -392,8 +794,8 @@
         <div class="brand-title">Asset Register</div>
         <input class="search-input" type="text" data-bind="search" value="${escapeHtml(vm.search)}" placeholder="Search tag, model, serial, owner…">
         <div class="spacer"></div>
-        <button class="btn-primary" data-act="openAdd">+ Add Asset</button>
-        <div class="avatar-badge">IT</div>
+        ${vm.isAdmin ? `<button class="btn-primary" data-act="openAdd">+ Add Asset</button>` : ''}
+        <div class="avatar-badge" data-act="logout" title="Sign out (${escapeHtml(vm.currentUserEmail)})">${escapeHtml(vm.currentUserLabel)}</div>
       </div>
     `;
   }
@@ -408,6 +810,8 @@
         ${item('overview', 'Overview', 'goOverview')}
         ${item('assets', 'Assets', 'goAssets')}
         ${item('reports', 'Reports', 'goReports')}
+        ${item('deprecated', 'Deprecated', 'goDeprecated')}
+        ${vm.isAdmin ? item('users', 'Users', 'goUsers') : ''}
         <div class="spacer"></div>
         <div class="nav-footer">v2.4 · ${vm.donutTotal} assets</div>
       </div>
@@ -482,6 +886,20 @@
     `;
   }
 
+  function renderBulkToolbar(vm) {
+    return `
+      <div class="bulk-toolbar">
+        <div class="bulk-count">${vm.selectedCount} selected</div>
+        <button class="btn-ghost" data-act="bulkCheckInOut">Check In/Out</button>
+        <button class="btn-ghost" data-act="bulkFlagRepair">Flag for Repair</button>
+        ${vm.isAdmin ? `<button class="btn-ghost" style="border-color:#F2635B;color:#F2635B;" data-act="bulkRetire">Retire</button>` : ''}
+        <button class="btn-ghost" data-act="bulkExport">Export Selected</button>
+        <div class="spacer"></div>
+        <button class="btn-ghost" data-act="clearSelection">Clear</button>
+      </div>
+    `;
+  }
+
   function renderAssets(vm) {
     const arrow = (col) => vm.sortCol === col ? (vm.sortDir === 'asc' ? '▲' : '▼') : '';
     return `
@@ -505,12 +923,16 @@
         </div>
 
         <div class="table-col">
-          <div class="table-toolbar">
-            <div class="table-count">Showing <span class="num">${vm.rangeStart}–${vm.rangeEnd}</span> of <span class="num">${vm.resultCount}</span></div>
-            <div class="spacer"></div>
-            <button class="btn-ghost" data-act="exportCsv">Export CSV</button>
-          </div>
+          ${vm.selectedCount > 0 ? renderBulkToolbar(vm) : `
+            <div class="table-toolbar">
+              <div class="table-count">Showing <span class="num">${vm.rangeStart}–${vm.rangeEnd}</span> of <span class="num">${vm.resultCount}</span></div>
+              <div class="spacer"></div>
+              ${vm.isAdmin ? `<button class="btn-ghost" data-act="openImport">Import CSV</button>` : ''}
+              <button class="btn-ghost" data-act="exportCsv">Export CSV</button>
+            </div>
+          `}
           <div class="table-header">
+            <div class="cell-check"><input type="checkbox" data-act="toggleSelectAll" ${vm.allPageSelected ? 'checked' : ''}></div>
             <div class="sortable" data-act="sortTag">TAG ${arrow('assetTag')}</div>
             <div>TYPE</div>
             <div>MODEL</div>
@@ -522,6 +944,7 @@
           <div class="table-body">
             ${vm.rows.map((row) => `
               <div class="table-row" data-act="openDetail" data-id="${escapeHtml(row.id)}">
+                <div class="cell-check"><input type="checkbox" data-act="toggleSelectRow" data-id="${escapeHtml(row.id)}" ${row.selected ? 'checked' : ''}></div>
                 <div class="cell-mono">${escapeHtml(row.assetTag)}</div>
                 <div class="cell-dim">${escapeHtml(row.itemType)}</div>
                 <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(row.model)}</div>
@@ -542,8 +965,8 @@
     `;
   }
 
-  function renderReports(vm) {
-    const barPanel = (title, bars, color, labelClass) => `
+  function barPanel(title, bars, color, labelClass) {
+    return `
       <div class="panel">
         <div class="panel-title">${title}</div>
         ${bars.map((bar) => `
@@ -555,6 +978,9 @@
         `).join('')}
       </div>
     `;
+  }
+
+  function renderReports(vm) {
     return `
       <div class="screen-scroll">
         <div class="page-header-row">
@@ -574,6 +1000,62 @@
               <div class="compliance-stat-value">${escapeHtml(String(stat.value))}</div>
             </div>
           `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDeprecated(vm) {
+    const cols = '118px 96px 1fr 140px 128px';
+    return `
+      <div class="screen-scroll">
+        <div class="page-header-row">
+          <div class="page-title" style="margin-bottom:0;">Deprecated Assets</div>
+          <div class="spacer"></div>
+          <button class="btn-primary" data-act="exportDeprecatedCsv">Export CSV</button>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">TOTAL DEPRECATED</div>
+            <div class="kpi-value" style="color:${STATUS_COLORS['Retired']};">${vm.deprecatedCount}</div>
+          </div>
+        </div>
+        <div class="grid-3">
+          ${barPanel('By Type', vm.deprecatedTypeBars, '#4FA3F7', 'narrow')}
+          ${barPanel('By Location', vm.deprecatedLocationBars, '#F2B84B', 'wide')}
+          ${barPanel('By Supplier', vm.deprecatedSupplierBars, '#8B7CF6', 'narrow')}
+        </div>
+        <div class="panel">
+          <div class="panel-title">Retirements by Month</div>
+          ${vm.deprecatedByMonth.map((bar) => `
+            <div class="bar-row">
+              <div class="bar-label">${escapeHtml(bar.label)}</div>
+              <div class="bar-track"><div class="bar-fill" style="background:#8792A2;width:${bar.pct}%;"></div></div>
+              <div class="bar-count">${bar.count}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="panel" style="padding:0;">
+          <div class="panel-title" style="padding:16px 20px 0;">Deprecated Register</div>
+          <div class="table-header" style="grid-template-columns:${cols};margin-top:8px;">
+            <div>TAG</div><div>TYPE</div><div>MODEL</div><div>LOCATION</div><div>RETIRED</div>
+          </div>
+          <div class="table-body">
+            ${vm.deprecatedRows.map((row) => `
+              <div class="table-row" style="grid-template-columns:${cols};" data-act="openDetail" data-id="${escapeHtml(row.id)}">
+                <div class="cell-mono">${escapeHtml(row.assetTag)}</div>
+                <div class="cell-dim">${escapeHtml(row.itemType)}</div>
+                <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(row.model)}</div>
+                <div class="cell-dim cell-ellipsis">${escapeHtml(row.location)}</div>
+                <div class="cell-deployed">${escapeHtml(row.dateRetiredStr)}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="pagination-bar">
+            <div class="page-info">Page ${vm.deprecatedPage} of ${vm.deprecatedTotalPages}</div>
+            <button class="btn-page" data-act="prevDeprecatedPage" ${vm.deprecatedPage <= 1 ? 'disabled' : ''}>Prev</button>
+            <button class="btn-page" data-act="nextDeprecatedPage" ${vm.deprecatedPage >= vm.deprecatedTotalPages ? 'disabled' : ''}>Next</button>
+          </div>
         </div>
       </div>
     `;
@@ -682,6 +1164,104 @@
             <button class="btn-secondary" data-act="closeAdd">Cancel</button>
             <button class="btn-submit" data-act="submitAdd">Add Asset</button>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderUsers(vm) {
+    return `
+      <div class="screen-scroll">
+        <div class="page-title">User Management</div>
+        <div class="panel">
+          <div class="panel-title">Users</div>
+          <div class="users-row users-header">
+            <div>EMAIL</div><div>ROLE</div><div>MFA</div><div>STATUS</div><div></div>
+          </div>
+          ${vm.users.map((u) => `
+            <div class="users-row">
+              <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(u.email)}</div>
+              <div>
+                <select class="form-select" data-bind="userRole.${u.id}" style="padding:5px 8px;font-size:12px;">
+                  <option value="standard" ${u.role === 'standard' ? 'selected' : ''}>Standard</option>
+                  <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+                </select>
+              </div>
+              <div class="cell-dim">${u.mfaEnabled ? 'Enrolled' : 'Not enrolled'}</div>
+              <div>
+                <span class="status-pill" style="background:${u.active ? 'rgba(52,226,160,0.14)' : 'rgba(242,99,91,0.14)'};color:${u.active ? '#34E2A0' : '#F2635B'};">${u.active ? 'Active' : 'Disabled'}</span>
+              </div>
+              <div class="users-row-actions">
+                <button class="btn-ghost users-row-btn" data-act="toggleUserActive" data-id="${u.id}">${u.active ? 'Disable' : 'Enable'}</button>
+                <button class="btn-ghost users-row-btn" data-act="resetUserMfa" data-id="${u.id}">Reset MFA</button>
+              </div>
+            </div>
+          `).join('')}
+          ${vm.users.length === 0 ? `<div class="users-row"><div class="cell-dim">No users yet.</div></div>` : ''}
+        </div>
+
+        <div class="panel" style="max-width:480px;">
+          <div class="panel-title">Create User</div>
+          <div class="form-group">
+            <div class="form-label">Email</div>
+            <input class="form-input" type="email" data-bind="userForm.email" value="${escapeHtml(vm.userForm.email)}">
+            ${vm.userFormErrors.email ? `<div class="form-error">${escapeHtml(vm.userFormErrors.email)}</div>` : ''}
+          </div>
+          <div class="form-group">
+            <div class="form-label">Temporary Password</div>
+            <input class="form-input" type="password" data-bind="userForm.password" value="${escapeHtml(vm.userForm.password)}">
+            ${vm.userFormErrors.password ? `<div class="form-error">${escapeHtml(vm.userFormErrors.password)}</div>` : ''}
+          </div>
+          <div class="form-group" style="margin-bottom:18px;">
+            <div class="form-label">Role</div>
+            <select class="form-select" data-bind="userForm.role">
+              <option value="standard" ${vm.userForm.role === 'standard' ? 'selected' : ''}>Standard</option>
+              <option value="admin" ${vm.userForm.role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+          </div>
+          <button class="btn-submit" data-act="submitCreateUser">Create User</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderImportModal(csvImport) {
+    const validCount = csvImport.rows.filter((r) => !r._errors.length).length;
+    const errorCount = csvImport.rows.length - validCount;
+    return `
+      <div class="modal-overlay" data-act="closeImport">
+        <div class="modal-box" style="max-width:640px;" data-act="noop">
+          <div class="modal-header">
+            <div class="modal-title">Import Assets from CSV</div>
+            <div class="modal-close" data-act="closeImport">×</div>
+          </div>
+
+          ${csvImport.step === 'pick' ? `
+            <div class="form-group">
+              <div class="form-label">CSV file</div>
+              <input class="form-input" type="file" id="csvFileInput" accept=".csv">
+            </div>
+            <div class="auth-hint">Expects the same columns as the Export CSV format (assetTag, itemType, model, serialNumber, status, location, firstName, lastName, supplier, poNumber, dateAcquired, dateDeployed, returnDate, dateRetired, deviceBlocked, agreementSigned).</div>
+            <div class="modal-actions">
+              <button class="btn-secondary" data-act="closeImport">Cancel</button>
+            </div>
+          ` : `
+            <div class="auth-hint">${escapeHtml(csvImport.fileName)} — <strong>${validCount}</strong> valid, <strong>${errorCount}</strong> ${errorCount === 1 ? 'error' : 'errors'} (errors will be skipped).</div>
+            <div class="import-preview-table">
+              ${csvImport.rows.map((row) => `
+                <div class="import-preview-row ${row._errors.length ? 'import-row-error' : ''}">
+                  <div class="cell-mono">${escapeHtml(row.assetTag || '—')}</div>
+                  <div class="cell-dim">${escapeHtml(row.itemType || '—')}</div>
+                  <div class="cell-ellipsis">${escapeHtml(row.model || '—')}</div>
+                  <div class="import-row-msg">${row._errors.length ? escapeHtml(row._errors.join('; ')) : 'OK'}</div>
+                </div>
+              `).join('')}
+            </div>
+            <div class="modal-actions">
+              <button class="btn-secondary" data-act="closeImport">Cancel</button>
+              <button class="btn-submit" data-act="confirmImport" ${validCount ? '' : 'disabled'}>Import ${validCount} Assets</button>
+            </div>
+          `}
         </div>
       </div>
     `;

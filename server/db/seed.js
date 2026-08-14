@@ -1,18 +1,16 @@
-/* ==========================================================================
-   Asset Register Dashboard — data generation & business logic
-   Deterministic mock IT asset register (2,150 assets) plus the pure
-   helper functions used to summarize, filter, and export it.
-   ========================================================================== */
+const bcrypt = require('bcryptjs');
+const db = require('./db');
+const { validatePasswordPolicy } = require('../lib/password');
+
+/* ---- Ported from public/js/data.js (generateAssets + its helpers) ----
+   Kept in lockstep with the client generator so the seeded fleet matches
+   what the original static demo showed. */
 
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch'];
 const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
-const STATUSES = ['In Use', 'In Stock', 'In Repair', 'Retired'];
 const TODAY_ISO = new Date().toISOString().slice(0, 10);
 const TODAY = new Date(TODAY_ISO + 'T00:00:00');
-const STATUS_COLORS = { 'In Use': '#34E2A0', 'In Stock': '#4FA3F7', 'In Repair': '#F2B84B', 'Retired': '#8792A2' };
-const STATUS_ORDER = ['In Use', 'In Stock', 'In Repair', 'Retired'];
-const PAGE_SIZE = 25;
 
 const MODELS = {
   'Laptop': ['Dell Latitude 5440', 'Dell Latitude 7440', 'Lenovo ThinkPad T14', 'Lenovo ThinkPad X1 Carbon', 'Apple MacBook Pro 14"', 'Apple MacBook Air M2', 'HP EliteBook 840 G10'],
@@ -29,7 +27,6 @@ const FIRST_NAMES = ['Olivia', 'Liam', 'Emma', 'Noah', 'Ava', 'Oliver', 'Isla', 
 const LAST_NAMES = ['Smith', 'Jones', 'Taylor', 'Williams', 'Brown', 'Davies', 'Evans', 'Wilson', 'Thomas', 'Roberts', 'Johnson', 'Lewis', 'Walker', 'Robinson', 'Wood', 'Thompson', 'White', 'Watson', 'Jackson', 'Wright', 'Green', 'Harris', 'Cooper', 'King', 'Baker', 'Adams', 'Bell', 'Hall', 'Carter', 'Mitchell'];
 const NOTES_POOL = ['Screen replaced under warranty', 'Battery replaced Jan 2026', 'Awaiting return from leaver', 'Loan device — project Atlas', 'Redeployed from Marketing', 'Keyboard repaired', 'Charger replaced', 'Refurbished unit'];
 
-// Deterministic PRNG so the generated register is identical on every load.
 function mulberry32(seed) {
   return function () {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -50,14 +47,6 @@ function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); retu
 function toISO(d) { return d.toISOString().slice(0, 10); }
 function randomDateBetween(rng, start, end) { return new Date(start.getTime() + rng() * (end.getTime() - start.getTime())); }
 function hex2(rng) { return Math.floor(rng() * 256).toString(16).padStart(2, '0').toUpperCase(); }
-
-function daysUntil(iso) { return Math.round((new Date(iso + 'T00:00:00').getTime() - TODAY.getTime()) / 86400000); }
-function formatDate(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso + 'T00:00:00');
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${String(d.getDate()).padStart(2, '0')} ${months[d.getMonth()]} ${d.getFullYear()}`;
-}
 
 function generateAssets(count, seed) {
   const rng = mulberry32(seed || 1337);
@@ -108,84 +97,84 @@ function generateAssets(count, seed) {
   return assets;
 }
 
-function summarize(assets) {
-  const byStatus = {};
-  let blockedCount = 0, pendingReturnCount = 0, unsignedCount = 0, signedEligible = 0, signedYes = 0;
-  assets.forEach((a) => {
-    byStatus[a.status] = (byStatus[a.status] || 0) + 1;
-    if (a.deviceBlocked) blockedCount++;
-    if (a.returnDate && daysUntil(a.returnDate) <= 45) pendingReturnCount++;
-    if (a.firstName) { signedEligible++; if (a.agreementSigned) signedYes++; else unsignedCount++; }
-  });
-  return { total: assets.length, byStatus, blockedCount, pendingReturnCount, unsignedCount, signedPct: signedEligible ? Math.round((signedYes / signedEligible) * 100) : 0 };
-}
-function groupCounts(assets, field) {
-  const map = {};
-  assets.forEach((a) => { const k = a[field] || 'Unknown'; map[k] = (map[k] || 0) + 1; });
-  return Object.entries(map).map(([label, count]) => ({ label, count })).sort((x, y) => y.count - x.count);
-}
-function attentionList(assets, limit) {
-  const items = [];
-  assets.forEach((a) => { if (a.deviceBlocked && a.status !== 'Retired') items.push({ ...a, reason: 'Device blocked', reasonColor: '#F2635B', pri: 0 }); });
-  assets.forEach((a) => {
-    if (a.returnDate) {
-      const days = daysUntil(a.returnDate);
-      if (days < 0) items.push({ ...a, reason: `Return overdue ${Math.abs(days)}d`, reasonColor: '#F2635B', pri: 1 });
-      else if (days <= 14) items.push({ ...a, reason: `Due back in ${days}d`, reasonColor: '#F2B84B', pri: 2 });
-    }
-  });
-  assets.forEach((a) => { if (a.status === 'In Repair') items.push({ ...a, reason: 'Awaiting repair', reasonColor: '#F2B84B', pri: 3 }); });
-  assets.forEach((a) => { if (a.firstName && !a.agreementSigned && a.status !== 'Retired') items.push({ ...a, reason: 'Agreement unsigned', reasonColor: '#8792A2', pri: 4 }); });
-  items.sort((x, y) => x.pri - y.pri);
-  const seen = new Set(); const out = [];
-  for (const it of items) { if (!seen.has(it.id)) { seen.add(it.id); out.push(it); } if (out.length >= limit) break; }
-  return out;
-}
-function buildCsv(rows) {
-  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'status', 'location', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
-  const header = cols.join(',');
-  const lines = rows.map((r) => cols.map((c) => {
-    let v = r[c];
-    if (typeof v === 'boolean') v = v ? 'Yes' : 'No';
-    if (v === null || v === undefined) v = '';
-    v = String(v).replace(/"/g, '""');
-    return /[,"\n]/.test(v) ? `"${v}"` : v;
-  }).join(','));
-  return [header, ...lines].join('\n');
-}
-function parseCsv(text) {
-  const rows = [];
-  let row = [], field = '', inQuotes = false;
-  const len = text.length;
-  for (let i = 0; i < len; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ',') { row.push(field); field = ''; }
-    else if (c === '\r') { /* skip */ }
-    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-    else field += c;
-  }
-  if (field.length || row.length) { row.push(field); rows.push(row); }
-  if (!rows.length) return [];
+/* ---- Seeding ---- */
 
-  const header = rows[0];
-  return rows.slice(1)
-    .filter((r) => r.length > 1 || (r.length === 1 && r[0] !== ''))
-    .map((r) => {
-      const obj = {};
-      header.forEach((h, idx) => {
-        let v = r[idx] !== undefined ? r[idx] : '';
-        if (h === 'deviceBlocked' || h === 'agreementSigned') v = v === 'Yes';
-        obj[h] = v;
+function seedAssets() {
+  const countRow = db.prepare('SELECT COUNT(*) AS n FROM assets').get();
+  if (countRow.n > 0) {
+    console.log(`Assets already seeded (${countRow.n} rows) — skipping.`);
+    return;
+  }
+
+  const assets = generateAssets(2150, 42);
+
+  const insertAsset = db.prepare(`
+    INSERT INTO assets (
+      asset_tag, item_type, model, serial_number, express_tag, mac_address, imei,
+      wsus_group, telephone_number, po_number, device_blocked, location,
+      first_name, last_name, date_acquired, date_deployed, return_date, date_retired,
+      notes, agreement_signed, supplier, status
+    ) VALUES (
+      @assetTag, @itemType, @model, @serialNumber, @expressTag, @macAddress, @imei,
+      @wsusGroup, @telephoneNumber, @poNumber, @deviceBlocked, @location,
+      @firstName, @lastName, @dateAcquired, @dateDeployed, @returnDate, @dateRetired,
+      @notes, @agreementSigned, @supplier, @status
+    )
+  `);
+  const insertHistory = db.prepare('INSERT INTO asset_history (asset_tag, date, text) VALUES (?, ?, ?)');
+
+  db.exec('BEGIN');
+  try {
+    for (const a of assets) {
+      insertAsset.run({
+        assetTag: a.assetTag, itemType: a.itemType, model: a.model, serialNumber: a.serialNumber,
+        expressTag: a.expressTag, macAddress: a.macAddress, imei: a.imei, wsusGroup: a.wsusGroup,
+        telephoneNumber: a.telephoneNumber, poNumber: a.poNumber, deviceBlocked: a.deviceBlocked ? 1 : 0,
+        location: a.location, firstName: a.firstName, lastName: a.lastName, dateAcquired: a.dateAcquired,
+        dateDeployed: a.dateDeployed, returnDate: a.returnDate, dateRetired: a.dateRetired, notes: a.notes,
+        agreementSigned: a.agreementSigned ? 1 : 0, supplier: a.supplier, status: a.status,
       });
-      return obj;
-    });
+      for (const h of a.history) insertHistory.run(a.assetTag, h.date, h.text);
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+
+  console.log(`Seeded ${assets.length} assets.`);
 }
-function freshForm() {
-  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', location: 'London HQ', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '' };
+
+function seedAdmin() {
+  const email = process.env.SEED_ADMIN_EMAIL;
+  const password = process.env.SEED_ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    console.log('SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD not set — skipping admin bootstrap.');
+    return;
+  }
+
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  if (existing) {
+    console.log(`Admin user ${email} already exists — skipping.`);
+    return;
+  }
+
+  const errors = validatePasswordPolicy(password);
+  if (errors.length) {
+    console.error(`SEED_ADMIN_PASSWORD does not meet policy:\n - ${errors.join('\n - ')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const hash = bcrypt.hashSync(password, 12);
+  db.prepare(`
+    INSERT INTO users (email, password_hash, role, mfa_enabled, active)
+    VALUES (?, ?, 'admin', 0, 1)
+  `).run(email, hash);
+
+  console.log(`Bootstrap admin created: ${email} (MFA enrollment required on first login).`);
 }
+
+seedAssets();
+seedAdmin();

@@ -1,0 +1,18 @@
+[Unit]
+Description=Asset Register Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=assetreg
+Group=assetreg
+WorkingDirectory=/opt/asset-register-dashboard
+EnvironmentFile=/opt/asset-register-dashboard/.env
+# Adjust the node path if not installed system-wide (e.g. via nvm): `which node`
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
