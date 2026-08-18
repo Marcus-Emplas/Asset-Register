@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/db');
 const { loginLimiter, mfaLimiter } = require('../middleware/rateLimit');
 const { generateSecret, buildEnrollment, verifyToken } = require('../lib/totp');
+const { requireAuth } = require('../middleware/auth');
+const { validatePasswordPolicy } = require('../lib/password');
 
 const router = express.Router();
 
@@ -82,6 +84,38 @@ router.post('/mfa/enroll/verify', mfaLimiter, async (req, res, next) => {
     delete req.session.pendingUserId;
     req.session.userId = user.id;
     return res.json({ status: 'ok', user: publicUser(user) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/change-password', requireAuth, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'missing_fields' });
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const ok = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'invalid_current_password' });
+
+    const pwErrors = validatePasswordPolicy(newPassword);
+    if (pwErrors.length) return res.status(400).json({ error: 'validation_failed', fields: { newPassword: pwErrors.join('; ') } });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/mfa/reset-self', requireAuth, (req, res, next) => {
+  try {
+    db.prepare('UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ?').run(req.user.id);
+    req.session.destroy((err) => {
+      if (err) return next(err);
+      res.json({ status: 'ok' });
+    });
   } catch (e) {
     next(e);
   }

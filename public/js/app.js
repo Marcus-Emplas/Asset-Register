@@ -39,6 +39,7 @@
         deprecatedPage: 1,
         csvImport: { open: false, step: 'pick', fileName: '', rows: [] },
         users: [], userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
+        accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
       };
       this._toastTimer = null;
     }
@@ -308,6 +309,52 @@
       }
     }
 
+    goAccount() {
+      this.setState({
+        screen: 'account', drawerOpen: false,
+        accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
+      });
+    }
+
+    updateAccountField(field, value) { this.setState((s) => ({ accountForm: { ...s.accountForm, [field]: value } })); }
+
+    async submitChangePassword() {
+      const { currentPassword, newPassword, confirmPassword } = this.state.accountForm;
+      const errors = {};
+      if (!currentPassword) errors.currentPassword = 'Current password is required';
+      const pwErrors = validatePasswordPolicy(newPassword);
+      if (pwErrors.length) errors.newPassword = pwErrors.join('; ');
+      else if (newPassword !== confirmPassword) errors.confirmPassword = 'Passwords do not match';
+      if (Object.keys(errors).length) { this.setState({ accountFormErrors: errors }); return; }
+
+      try {
+        await Api.post('/api/auth/change-password', { currentPassword, newPassword });
+        this.setState({
+          accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
+        });
+        this.showToast('Password updated');
+      } catch (e) {
+        if (e.status === 401) this.setState({ accountFormErrors: { currentPassword: 'Current password is incorrect' } });
+        else if (e.status === 400 && e.data && e.data.fields) this.setState({ accountFormErrors: e.data.fields });
+        else this.showToast('Failed to update password');
+      }
+    }
+
+    async resetOwnMfa() {
+      if (!window.confirm('Reset your MFA enrollment? You will be signed out and must set up a new authenticator on next login.')) return;
+      try {
+        await Api.post('/api/auth/mfa/reset-self');
+        this.setState({
+          currentUser: null, assets: [], ready: false, screen: 'overview',
+          authScreen: 'login', authForm: { email: '', password: '' },
+          authError: 'MFA reset — sign in again to set up a new authenticator.',
+          mfaForm: { token: '' }, mfaError: '',
+        });
+      } catch (e) {
+        this.showToast('Failed to reset MFA');
+      }
+    }
+
     exportDeprecatedCsv() {
       const rows = this.state.assets.filter((a) => a.status === 'Retired');
       const csv = buildCsv(rows);
@@ -528,6 +575,7 @@
         deprecatedRows, deprecatedPage, deprecatedTotalPages,
         csvImport: st.csvImport,
         users: st.users, userForm: st.userForm, userFormErrors: st.userFormErrors,
+        accountForm: st.accountForm, accountFormErrors: st.accountFormErrors,
       };
     }
 
@@ -664,6 +712,9 @@
           case 'submitCreateUser': this.submitCreateUser(); break;
           case 'toggleUserActive': this.toggleUserActive(id); break;
           case 'resetUserMfa': this.resetUserMfa(id); break;
+          case 'goAccount': this.goAccount(); break;
+          case 'submitChangePassword': this.submitChangePassword(); break;
+          case 'resetOwnMfa': this.resetOwnMfa(); break;
           case 'noop': /* clicks on the drawer/modal panel itself: absorb here so they
                           don't fall through to the backdrop's close handler */ break;
           default: break;
@@ -679,6 +730,7 @@
         else if (bind.startsWith('authForm.')) this.updateAuthField(bind.slice(9), el.value);
         else if (bind.startsWith('mfaForm.')) this.updateMfaField(bind.slice(8), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
+        else if (bind.startsWith('accountForm.')) this.updateAccountField(bind.slice(12), el.value);
       };
 
       root.onchange = (e) => {
@@ -708,7 +760,7 @@
         <div class="auth-card">
           <div class="auth-brand">
             <div class="brand-badge">R</div>
-            <div class="brand-title">Asset Register</div>
+            <div class="brand-title">TheAssetHub</div>
           </div>
           ${body}
         </div>
@@ -777,6 +829,7 @@
             ${vm.screen === 'reports' ? renderReports(vm) : ''}
             ${vm.screen === 'deprecated' ? renderDeprecated(vm) : ''}
             ${vm.screen === 'users' ? renderUsers(vm) : ''}
+            ${vm.screen === 'account' ? renderAccount(vm) : ''}
           </div>
           ${vm.drawerOpen && vm.selected ? renderDrawer(vm.selected) : ''}
           ${vm.addOpen ? renderAddModal(vm.form, vm.formErrors) : ''}
@@ -790,12 +843,14 @@
   function renderTopbar(vm) {
     return `
       <div class="topbar">
-        <div class="brand-badge">R</div>
-        <div class="brand-title">Asset Register</div>
+        <div class="topbar-brand">
+          <div class="brand-badge">R</div>
+          <div class="brand-title">TheAssetHub</div>
+        </div>
         <input class="search-input" type="text" data-bind="search" value="${escapeHtml(vm.search)}" placeholder="Search tag, model, serial, owner…">
         <div class="spacer"></div>
         ${vm.isAdmin ? `<button class="btn-primary" data-act="openAdd">+ Add Asset</button>` : ''}
-        <div class="avatar-badge" data-act="logout" title="Sign out (${escapeHtml(vm.currentUserEmail)})">${escapeHtml(vm.currentUserLabel)}</div>
+        <div class="avatar-badge" data-act="goAccount" title="Account settings (${escapeHtml(vm.currentUserEmail)})">${escapeHtml(vm.currentUserLabel)}</div>
       </div>
     `;
   }
@@ -882,6 +937,50 @@
             </div>
           `).join('') : ''}
         </div>
+      </div>
+    `;
+  }
+
+  function renderAccount(vm) {
+    const f = vm.accountForm;
+    const errs = vm.accountFormErrors;
+    return `
+      <div class="screen-scroll">
+        <div class="page-title">Account Settings</div>
+
+        <div class="panel" style="max-width:420px;margin-bottom:16px;">
+          <div class="panel-title">Profile</div>
+          <div class="account-info-row"><span class="account-info-label">Email</span><span class="account-info-value">${escapeHtml(vm.currentUserEmail)}</span></div>
+          <div class="account-info-row"><span class="account-info-label">Role</span><span class="account-info-value">${vm.isAdmin ? 'Admin' : 'Standard'}</span></div>
+        </div>
+
+        <div class="panel" style="max-width:420px;margin-bottom:16px;">
+          <div class="panel-title">Change Password</div>
+          <div class="form-group">
+            <div class="form-label">Current password</div>
+            <input class="form-input" type="password" data-bind="accountForm.currentPassword" value="${escapeHtml(f.currentPassword)}" autocomplete="current-password">
+            ${errs.currentPassword ? `<div class="form-error">${escapeHtml(errs.currentPassword)}</div>` : ''}
+          </div>
+          <div class="form-group">
+            <div class="form-label">New password</div>
+            <input class="form-input" type="password" data-bind="accountForm.newPassword" value="${escapeHtml(f.newPassword)}" autocomplete="new-password">
+            ${errs.newPassword ? `<div class="form-error">${escapeHtml(errs.newPassword)}</div>` : ''}
+          </div>
+          <div class="form-group">
+            <div class="form-label">Confirm new password</div>
+            <input class="form-input" type="password" data-bind="accountForm.confirmPassword" value="${escapeHtml(f.confirmPassword)}" autocomplete="new-password">
+            ${errs.confirmPassword ? `<div class="form-error">${escapeHtml(errs.confirmPassword)}</div>` : ''}
+          </div>
+          <button class="btn-submit" data-act="submitChangePassword">Update Password</button>
+        </div>
+
+        <div class="panel" style="max-width:420px;margin-bottom:16px;">
+          <div class="panel-title">Two-Factor Authentication</div>
+          <div class="account-hint">Resetting will sign you out immediately; you'll set up a new authenticator on next login.</div>
+          <button class="btn-ghost" data-act="resetOwnMfa">Reset MFA</button>
+        </div>
+
+        <button class="btn-ghost" style="border-color:#F2635B;color:#F2635B;" data-act="logout">Sign Out</button>
       </div>
     `;
   }
