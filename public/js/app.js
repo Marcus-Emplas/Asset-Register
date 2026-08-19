@@ -849,6 +849,7 @@
         </div>
         <input class="search-input" type="text" data-bind="search" value="${escapeHtml(vm.search)}" placeholder="Search tag, model, serial, owner…">
         <div class="spacer"></div>
+        ${vm.isAdmin ? `<button class="btn-ghost" data-act="openImport">Import CSV</button>` : ''}
         ${vm.isAdmin ? `<button class="btn-primary" data-act="openAdd">+ Add Asset</button>` : ''}
         <div class="avatar-badge" data-act="goAccount" title="Account settings (${escapeHtml(vm.currentUserEmail)})">${escapeHtml(vm.currentUserLabel)}</div>
       </div>
