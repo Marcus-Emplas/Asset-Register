@@ -8,6 +8,10 @@ const { validatePasswordPolicy } = require('../lib/password');
 
 const router = express.Router();
 
+// Compared against when no matching/active user is found, so login takes the same
+// time either way and response timing can't be used to enumerate valid emails.
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing-safety', 12);
+
 function publicUser(row) {
   return { id: row.id, email: row.email, role: row.role };
 }
@@ -24,22 +28,21 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
 
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
-    if (!user || !user.active) return res.status(401).json({ error: 'invalid_credentials' });
-
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+    const activeUser = user && user.active ? user : null;
+    const ok = await bcrypt.compare(password, activeUser ? activeUser.password_hash : DUMMY_HASH);
+    if (!activeUser || !ok) return res.status(401).json({ error: 'invalid_credentials' });
 
     await regenerate(req);
-    req.session.pendingUserId = user.id;
+    req.session.pendingUserId = activeUser.id;
 
-    if (user.mfa_enabled) {
+    if (activeUser.mfa_enabled) {
       return res.json({ status: 'mfa_verify' });
     }
 
     // First-time login: (re)generate an enrollment secret and stash it, unconfirmed.
     const secret = await generateSecret();
-    db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?').run(secret, user.id);
-    const enrollment = await buildEnrollment(user.email, secret);
+    db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?').run(secret, activeUser.id);
+    const enrollment = await buildEnrollment(activeUser.email, secret);
     return res.json({ status: 'mfa_enroll', qr: enrollment.qr, manualKey: enrollment.manualKey });
   } catch (e) {
     next(e);
@@ -89,7 +92,7 @@ router.post('/mfa/enroll/verify', mfaLimiter, async (req, res, next) => {
   }
 });
 
-router.post('/change-password', requireAuth, async (req, res, next) => {
+router.post('/change-password', requireAuth, mfaLimiter, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'missing_fields' });
@@ -109,7 +112,7 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
   }
 });
 
-router.post('/mfa/reset-self', requireAuth, (req, res, next) => {
+router.post('/mfa/reset-self', requireAuth, mfaLimiter, (req, res, next) => {
   try {
     db.prepare('UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ?').run(req.user.id);
     req.session.destroy((err) => {

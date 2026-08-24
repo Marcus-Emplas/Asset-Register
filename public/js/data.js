@@ -148,7 +148,9 @@ function buildCsv(rows) {
     let v = r[c];
     if (typeof v === 'boolean') v = v ? 'Yes' : 'No';
     if (v === null || v === undefined) v = '';
-    v = String(v).replace(/"/g, '""');
+    v = String(v);
+    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; // neutralize CSV/Excel formula injection
+    v = v.replace(/"/g, '""');
     return /[,"\n]/.test(v) ? `"${v}"` : v;
   }).join(','));
   return [header, ...lines].join('\n');
