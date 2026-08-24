@@ -1,9 +1,3 @@
-/* ==========================================================================
-   Asset Register Dashboard — Console Grid
-   Vanilla JS app: state, view-model computation, and DOM rendering.
-   No frameworks, no build step, works fully offline.
-   ========================================================================== */
-
 (function () {
   'use strict';
 
@@ -21,9 +15,6 @@
     return `rgba(${r},${g},${b},0.14)`;
   }
 
-  /* ------------------------------------------------------------------ *
-   * App: owns state, derives the view model, and re-renders on change. *
-   * ------------------------------------------------------------------ */
   class App {
     constructor() {
       this.state = {
@@ -77,8 +68,6 @@
         if (this.state.toast && this.state.toast.id === id) this.setState({ toast: null });
       }, 2600);
     }
-
-    // -- actions -------------------------------------------------------
 
     setScreen(screen) { this.setState({ screen, drawerOpen: false }); }
     setSearch(value) { this.setState({ search: value, page: 1, selectedIds: [] }); }
@@ -465,8 +454,6 @@
       return rows;
     }
 
-    // -- view model ------------------------------------------------------
-
     computeViewModel() {
       if (!this.state.ready) return { ready: false };
       const st = this.state;
@@ -622,8 +609,6 @@
       };
     }
 
-    // -- rendering ---------------------------------------------------------
-
     render() {
       const focusInfo = this._captureFocus();
       if (!this.state.currentUser) {
@@ -745,10 +730,6 @@
       };
     }
   }
-
-  /* ------------------------------------------------------------------ *
-   * Pure render helpers — build HTML strings from the view model.       *
-   * ------------------------------------------------------------------ */
 
   function renderAuthShell(state) {
     let body;
