@@ -14,9 +14,6 @@ const app = express();
 
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 
-// Default helmet CSP: everything same-origin, no inline scripts. The app has no
-// external resources and uses only data: URIs (QR codes) and inline style attributes,
-// both allowed by helmet's default policy.
 app.use(helmet());
 app.use(express.json({ limit: '2mb' }));
 

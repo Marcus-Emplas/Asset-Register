@@ -1,4 +1,3 @@
-/* Thin fetch wrapper for talking to the Express API. Plain global, no build step. */
 const Api = {
   onUnauthorized: null,
 

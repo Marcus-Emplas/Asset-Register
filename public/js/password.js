@@ -1,4 +1,3 @@
-/* Client-side mirror of server/lib/password.js — UX hints only, never the source of truth. */
 function validatePasswordPolicy(password) {
   const errors = [];
   const pw = typeof password === 'string' ? password : '';

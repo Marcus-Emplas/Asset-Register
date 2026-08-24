@@ -2,10 +2,6 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const { validatePasswordPolicy } = require('../lib/password');
 
-/* ---- Ported from public/js/data.js (generateAssets + its helpers) ----
-   Kept in lockstep with the client generator so the seeded fleet matches
-   what the original static demo showed. */
-
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch'];
 const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
@@ -96,8 +92,6 @@ function generateAssets(count, seed) {
   }
   return assets;
 }
-
-/* ---- Seeding ---- */
 
 function seedAssets() {
   const countRow = db.prepare('SELECT COUNT(*) AS n FROM assets').get();

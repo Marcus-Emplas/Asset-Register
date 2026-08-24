@@ -1,9 +1,3 @@
-/* ==========================================================================
-   Asset Register Dashboard — data generation & business logic
-   Deterministic mock IT asset register (2,150 assets) plus the pure
-   helper functions used to summarize, filter, and export it.
-   ========================================================================== */
-
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch'];
 const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
@@ -29,7 +23,6 @@ const FIRST_NAMES = ['Olivia', 'Liam', 'Emma', 'Noah', 'Ava', 'Oliver', 'Isla', 
 const LAST_NAMES = ['Smith', 'Jones', 'Taylor', 'Williams', 'Brown', 'Davies', 'Evans', 'Wilson', 'Thomas', 'Roberts', 'Johnson', 'Lewis', 'Walker', 'Robinson', 'Wood', 'Thompson', 'White', 'Watson', 'Jackson', 'Wright', 'Green', 'Harris', 'Cooper', 'King', 'Baker', 'Adams', 'Bell', 'Hall', 'Carter', 'Mitchell'];
 const NOTES_POOL = ['Screen replaced under warranty', 'Battery replaced Jan 2026', 'Awaiting return from leaver', 'Loan device — project Atlas', 'Redeployed from Marketing', 'Keyboard repaired', 'Charger replaced', 'Refurbished unit'];
 
-// Deterministic PRNG so the generated register is identical on every load.
 function mulberry32(seed) {
   return function () {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -149,7 +142,7 @@ function buildCsv(rows) {
     if (typeof v === 'boolean') v = v ? 'Yes' : 'No';
     if (v === null || v === undefined) v = '';
     v = String(v);
-    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; // neutralize CSV/Excel formula injection
+    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; 
     v = v.replace(/"/g, '""');
     return /[,"\n]/.test(v) ? `"${v}"` : v;
   }).join(','));
