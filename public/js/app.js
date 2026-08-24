@@ -23,8 +23,10 @@
         sortCol: 'assetTag', sortDir: 'asc', page: 1, selectedId: null, drawerOpen: false,
         addOpen: false, form: freshForm(), formErrors: {},
         currentUser: null,
-        authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authSubmitting: false,
+        authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authInfo: '', authSubmitting: false,
         mfaForm: { token: '' }, mfaError: '',
+        forgotForm: { email: '' }, forgotError: '', forgotSubmitting: false,
+        resetForm: { email: '', code: '', newPassword: '', confirmPassword: '' }, resetError: '', resetSubmitting: false,
         mfaEnroll: { qr: '', manualKey: '' },
         selectedIds: [],
         deprecatedPage: 1,
@@ -103,11 +105,56 @@
     updateFormField(field, value) { this.setState((s) => ({ form: { ...s.form, [field]: value } })); }
     updateAuthField(field, value) { this.setState((s) => ({ authForm: { ...s.authForm, [field]: value } })); }
     updateMfaField(field, value) { this.setState((s) => ({ mfaForm: { ...s.mfaForm, [field]: value } })); }
+    updateForgotField(field, value) { this.setState((s) => ({ forgotForm: { ...s.forgotForm, [field]: value } })); }
+    updateResetField(field, value) { this.setState((s) => ({ resetForm: { ...s.resetForm, [field]: value } })); }
+
+    goForgotPassword() {
+      this.setState({
+        authScreen: 'forgot-password',
+        forgotForm: { email: this.state.authForm.email || '' },
+        forgotError: '',
+      });
+    }
+
+    async submitForgotPassword() {
+      const { email } = this.state.forgotForm;
+      if (!email) { this.setState({ forgotError: 'Email is required' }); return; }
+      this.setState({ forgotSubmitting: true, forgotError: '' });
+      try {
+        await Api.post('/api/auth/forgot-password', { email });
+        this.setState({
+          authScreen: 'reset-password', forgotSubmitting: false,
+          resetForm: { email, code: '', newPassword: '', confirmPassword: '' }, resetError: '',
+        });
+      } catch (e) {
+        this.setState({ forgotError: e.status === 429 ? 'Too many attempts — try again later' : 'Something went wrong — try again', forgotSubmitting: false });
+      }
+    }
+
+    async submitResetPassword() {
+      const { email, code, newPassword, confirmPassword } = this.state.resetForm;
+      if (!code || !newPassword || !confirmPassword) { this.setState({ resetError: 'All fields are required' }); return; }
+      if (newPassword !== confirmPassword) { this.setState({ resetError: 'Passwords do not match' }); return; }
+      this.setState({ resetSubmitting: true, resetError: '' });
+      try {
+        await Api.post('/api/auth/reset-password', { email, code, newPassword });
+        this.setState({
+          authScreen: 'login', resetSubmitting: false,
+          authForm: { email, password: '' }, authError: '', authInfo: 'Password reset — sign in with your new password',
+        });
+      } catch (e) {
+        let msg = 'Something went wrong — try again';
+        if (e.status === 429) msg = 'Too many attempts — try again later';
+        else if (e.status === 400 && e.data && e.data.fields && e.data.fields.newPassword) msg = e.data.fields.newPassword;
+        else if (e.status === 401) msg = 'Invalid or expired code';
+        this.setState({ resetError: msg, resetSubmitting: false });
+      }
+    }
 
     async submitLogin() {
       const { email, password } = this.state.authForm;
       if (!email || !password) { this.setState({ authError: 'Email and password are required' }); return; }
-      this.setState({ authSubmitting: true, authError: '' });
+      this.setState({ authSubmitting: true, authError: '', authInfo: '' });
       try {
         const res = await Api.post('/api/auth/login', { email, password });
         if (res.status === 'mfa_verify') {
@@ -153,14 +200,17 @@
     }
 
     backToAuth() {
-      this.setState({ authScreen: 'login', mfaForm: { token: '' }, mfaError: '' });
+      this.setState({
+        authScreen: 'login', mfaForm: { token: '' }, mfaError: '',
+        forgotError: '', resetError: '', authInfo: '',
+      });
     }
 
     async logout() {
       try { await Api.post('/api/auth/logout'); } catch (e) { /* ignore */ }
       this.setState({
         currentUser: null, assets: [], ready: false, screen: 'overview',
-        authScreen: 'login', authForm: { email: '', password: '' }, authError: '',
+        authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authInfo: '',
         mfaForm: { token: '' }, mfaError: '',
       });
     }
@@ -679,6 +729,9 @@
           case 'retireAsset': this.retireAsset(id); break;
           case 'submitAdd': this.submitAdd(); break;
           case 'submitLogin': this.submitLogin(); break;
+          case 'goForgotPassword': this.goForgotPassword(); break;
+          case 'submitForgotPassword': this.submitForgotPassword(); break;
+          case 'submitResetPassword': this.submitResetPassword(); break;
           case 'submitMfaVerify': this.submitMfaVerify(); break;
           case 'submitMfaEnrollVerify': this.submitMfaEnrollVerify(); break;
           case 'backToAuth': this.backToAuth(); break;
@@ -714,6 +767,8 @@
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
         else if (bind.startsWith('authForm.')) this.updateAuthField(bind.slice(9), el.value);
         else if (bind.startsWith('mfaForm.')) this.updateMfaField(bind.slice(8), el.value);
+        else if (bind.startsWith('forgotForm.')) this.updateForgotField(bind.slice(11), el.value);
+        else if (bind.startsWith('resetForm.')) this.updateResetField(bind.slice(10), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
         else if (bind.startsWith('accountForm.')) this.updateAccountField(bind.slice(12), el.value);
       };
@@ -735,6 +790,8 @@
     let body;
     if (state.authScreen === 'mfa-verify') body = renderMfaVerify(state);
     else if (state.authScreen === 'mfa-enroll') body = renderMfaEnroll(state);
+    else if (state.authScreen === 'forgot-password') body = renderForgotPassword(state);
+    else if (state.authScreen === 'reset-password') body = renderResetPassword(state);
     else body = renderLogin(state);
     return `
       <div class="auth-shell">
@@ -753,6 +810,7 @@
     const f = state.authForm;
     return `
       <div class="auth-title">Sign in</div>
+      ${state.authInfo ? `<div class="auth-success">${escapeHtml(state.authInfo)}</div>` : ''}
       ${state.authError ? `<div class="auth-error">${escapeHtml(state.authError)}</div>` : ''}
       <div class="form-group">
         <div class="form-label">Email</div>
@@ -763,6 +821,45 @@
         <input class="form-input" type="password" data-bind="authForm.password" value="${escapeHtml(f.password)}" autocomplete="current-password">
       </div>
       <button class="btn-submit" style="width:100%;" data-act="submitLogin" ${state.authSubmitting ? 'disabled' : ''}>${state.authSubmitting ? 'Signing in…' : 'Sign in'}</button>
+      <div class="auth-link" data-act="goForgotPassword">Forgot password?</div>
+    `;
+  }
+
+  function renderForgotPassword(state) {
+    const f = state.forgotForm;
+    return `
+      <div class="auth-title">Reset your password</div>
+      <div class="auth-hint">Enter your account email and we'll send an 8-character reset code to it.</div>
+      ${state.forgotError ? `<div class="auth-error">${escapeHtml(state.forgotError)}</div>` : ''}
+      <div class="form-group">
+        <div class="form-label">Email</div>
+        <input class="form-input" type="email" data-bind="forgotForm.email" value="${escapeHtml(f.email)}" autocomplete="username">
+      </div>
+      <button class="btn-submit" style="width:100%;" data-act="submitForgotPassword" ${state.forgotSubmitting ? 'disabled' : ''}>${state.forgotSubmitting ? 'Sending…' : 'Send reset code'}</button>
+      <div class="auth-back" data-act="backToAuth">&larr; Back to sign in</div>
+    `;
+  }
+
+  function renderResetPassword(state) {
+    const f = state.resetForm;
+    return `
+      <div class="auth-title">Enter reset code</div>
+      <div class="auth-hint">If an account exists for ${escapeHtml(f.email)}, an 8-character code was sent to it. Enter it below with your new password.</div>
+      ${state.resetError ? `<div class="auth-error">${escapeHtml(state.resetError)}</div>` : ''}
+      <div class="form-group">
+        <div class="form-label">Reset code</div>
+        <input class="form-input mono" style="text-transform:uppercase;" type="text" maxlength="8" data-bind="resetForm.code" value="${escapeHtml(f.code)}" autocomplete="one-time-code">
+      </div>
+      <div class="form-group">
+        <div class="form-label">New password</div>
+        <input class="form-input" type="password" data-bind="resetForm.newPassword" value="${escapeHtml(f.newPassword)}" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <div class="form-label">Confirm new password</div>
+        <input class="form-input" type="password" data-bind="resetForm.confirmPassword" value="${escapeHtml(f.confirmPassword)}" autocomplete="new-password">
+      </div>
+      <button class="btn-submit" style="width:100%;" data-act="submitResetPassword" ${state.resetSubmitting ? 'disabled' : ''}>${state.resetSubmitting ? 'Resetting…' : 'Reset password'}</button>
+      <div class="auth-back" data-act="backToAuth">&larr; Back to sign in</div>
     `;
   }
 

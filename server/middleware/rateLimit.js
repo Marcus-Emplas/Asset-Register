@@ -16,4 +16,12 @@ const mfaLimiter = rateLimit({
   message: { error: 'too_many_attempts' },
 });
 
-module.exports = { loginLimiter, mfaLimiter };
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_attempts' },
+});
+
+module.exports = { loginLimiter, mfaLimiter, passwordResetLimiter };

@@ -1,10 +1,14 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/db');
-const { loginLimiter, mfaLimiter } = require('../middleware/rateLimit');
+const { loginLimiter, mfaLimiter, passwordResetLimiter } = require('../middleware/rateLimit');
 const { generateSecret, buildEnrollment, verifyToken } = require('../lib/totp');
 const { requireAuth } = require('../middleware/auth');
 const { validatePasswordPolicy } = require('../lib/password');
+const { generateResetCode } = require('../lib/resetCode');
+const { sendPasswordResetEmail } = require('../lib/email');
+
+const RESET_CODE_TTL_MS = 15 * 60 * 1000;
 
 const router = express.Router();
 
@@ -44,6 +48,58 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?').run(secret, activeUser.id);
     const enrollment = await buildEnrollment(activeUser.email, secret);
     return res.json({ status: 'mfa_enroll', qr: enrollment.qr, manualKey: enrollment.manualKey });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/forgot-password', passwordResetLimiter, async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'missing_fields' });
+
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
+    if (user && user.active) {
+      const code = generateResetCode();
+      const codeHash = await bcrypt.hash(code, 12);
+      const expiresAt = new Date(Date.now() + RESET_CODE_TTL_MS).toISOString();
+      db.prepare('INSERT INTO password_resets (user_id, code_hash, expires_at) VALUES (?, ?, ?)').run(user.id, codeHash, expiresAt);
+      await sendPasswordResetEmail(user.email, code);
+    }
+
+    // Always respond the same way so this endpoint can't be used to enumerate accounts.
+    return res.json({ status: 'ok' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/reset-password', passwordResetLimiter, async (req, res, next) => {
+  try {
+    const { email, code, newPassword } = req.body || {};
+    if (!email || !code || !newPassword) return res.status(400).json({ error: 'missing_fields' });
+
+    const pwErrors = validatePasswordPolicy(newPassword);
+    if (pwErrors.length) return res.status(400).json({ error: 'validation_failed', fields: { newPassword: pwErrors.join('; ') } });
+
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
+    if (!user || !user.active) return res.status(401).json({ error: 'invalid_or_expired_code' });
+
+    const pending = db.prepare(
+      'SELECT * FROM password_resets WHERE user_id = ? AND used = 0 AND expires_at > ? ORDER BY id DESC'
+    ).all(user.id, new Date().toISOString());
+
+    let match = null;
+    for (const row of pending) {
+      if (await bcrypt.compare(String(code), row.code_hash)) { match = row; break; }
+    }
+    if (!match) return res.status(401).json({ error: 'invalid_or_expired_code' });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+    db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0').run(user.id);
+
+    return res.json({ status: 'ok' });
   } catch (e) {
     next(e);
   }
