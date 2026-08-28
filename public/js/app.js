@@ -360,6 +360,23 @@
       }
     }
 
+    async deleteUser(id) {
+      const user = this.state.users.find((u) => u.id === Number(id));
+      if (!user) return;
+      if (this.state.currentUser && this.state.currentUser.id === Number(id)) {
+        this.showToast('You cannot delete your own account');
+        return;
+      }
+      if (!window.confirm(`Delete user ${user.email}? This cannot be undone.`)) return;
+      try {
+        await Api.delete(`/api/users/${id}`);
+        this.setState((s) => ({ users: s.users.filter((u) => u.id !== Number(id)) }));
+        this.showToast(`${user.email} deleted`);
+      } catch (e) {
+        this.showToast(e.data && e.data.error === 'cannot_delete_self' ? 'You cannot delete your own account' : 'Failed to delete user');
+      }
+    }
+
     async goSimCards() {
       this.setState({ screen: 'simcards', drawerOpen: false });
       await this.loadSimCards();
@@ -696,6 +713,7 @@
         deprecatedRows, deprecatedPage, deprecatedTotalPages,
         csvImport: st.csvImport,
         users: st.users, userForm: st.userForm, userFormErrors: st.userFormErrors,
+        currentUserId: st.currentUser ? st.currentUser.id : null,
         accountForm: st.accountForm, accountFormErrors: st.accountFormErrors,
         simCards: st.simCards, simForm: st.simForm, simFormErrors: st.simFormErrors,
         assignableMobiles: all.filter((a) => a.itemType === 'Mobile Phone' && a.status !== 'Retired'),
@@ -843,6 +861,7 @@
           case 'submitCreateUser': this.submitCreateUser(); break;
           case 'toggleUserActive': this.toggleUserActive(id); break;
           case 'resetUserMfa': this.resetUserMfa(id); break;
+          case 'deleteUser': this.deleteUser(id); break;
           case 'goSimCards': this.goSimCards(); break;
           case 'submitCreateSim': this.submitCreateSim(); break;
           case 'unassignSim': this.unassignSim(id); break;
@@ -1586,6 +1605,7 @@
               <div class="users-row-actions">
                 <button class="btn-ghost users-row-btn" data-act="toggleUserActive" data-id="${u.id}">${u.active ? 'Disable' : 'Enable'}</button>
                 <button class="btn-ghost users-row-btn" data-act="resetUserMfa" data-id="${u.id}">Reset MFA</button>
+                ${u.id !== vm.currentUserId ? `<button class="btn-ghost users-row-btn" style="border-color:#F2635B;color:#F2635B;" data-act="deleteUser" data-id="${u.id}">Delete</button>` : ''}
               </div>
             </div>
           `).join('')}

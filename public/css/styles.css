@@ -244,7 +244,7 @@ button, input, select { font-family: inherit; }
 .table-body { flex: 1; overflow-y: auto; }
 
 .table-row {
-  display: grid; grid-template-columns: 32px 118px 96px 1fr 140px 128px 108px 96px;
+  display: grid; grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 108px 96px;
   gap: 12px; align-items: center; padding: 11px 20px;
   border-bottom: 1px solid var(--bg-field); cursor: pointer; font-size: 12.5px;
 }
@@ -431,7 +431,7 @@ button, input, select { font-family: inherit; }
 .import-row-error .import-row-msg { color: var(--red); }
 
 .users-row {
-  display: grid; grid-template-columns: 1fr 130px 120px 100px 180px;
+  display: grid; grid-template-columns: 1fr 130px 120px 100px 260px;
   gap: 12px; align-items: center; padding: 10px 0;
   border-bottom: 1px solid var(--bg-field); font-size: 12.5px;
 }
@@ -440,5 +440,5 @@ button, input, select { font-family: inherit; }
   font-size: 11px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.04em;
   padding-bottom: 8px; border-bottom: 1px solid var(--border);
 }
-.users-row-actions { display: flex; gap: 8px; }
+.users-row-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .users-row-btn { padding: 5px 10px; font-size: 11.5px; }

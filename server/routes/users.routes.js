@@ -63,4 +63,14 @@ router.patch('/:id', (req, res) => {
   res.json(publicUser(updated));
 });
 
+router.delete('/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'not_found' });
+  if (req.user.id === id) return res.status(400).json({ error: 'cannot_delete_self' });
+
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  res.json({ status: 'ok' });
+});
+
 module.exports = router;

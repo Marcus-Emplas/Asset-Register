@@ -23,4 +23,5 @@ const Api = {
   get(path) { return Api._req('GET', path); },
   post(path, body) { return Api._req('POST', path, body === undefined ? {} : body); },
   patch(path, body) { return Api._req('PATCH', path, body === undefined ? {} : body); },
+  delete(path) { return Api._req('DELETE', path); },
 };
