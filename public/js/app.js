@@ -274,11 +274,11 @@
       const spaceIdx = name.indexOf(' ');
       const firstName = spaceIdx === -1 ? name : name.slice(0, spaceIdx);
       const lastName = spaceIdx === -1 ? '' : name.slice(spaceIdx + 1);
+      const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
+      const payload = { firstName, lastName, location: f.location, agreementSigned: !!f.agreementSigned };
+      if (isAdmin) { payload.company = f.company; payload.deviceBlocked = !!f.deviceBlocked; }
       try {
-        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, {
-          firstName, lastName, location: f.location, company: f.company,
-          deviceBlocked: !!f.deviceBlocked, agreementSigned: !!f.agreementSigned,
-        });
+        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, payload);
         this.applyAssetUpdate(updated);
         this.setState({ assignForm: this.assignFormFromAsset(updated) });
         this.showToast(`${assetTag} updated`);
@@ -298,16 +298,23 @@
       }
     }
 
-    toggleCostTracked() {
-      this.setState((s) => ({ notesForm: { ...s.notesForm, costTracked: !s.notesForm.costTracked } }));
+    toggleCostTracked(checked) {
+      // Mutate state directly and patch the cost input's disabled state in
+      // place instead of a full setState/render — avoids rebuilding the
+      // whole drawer (and losing scroll position / any in-progress typing
+      // elsewhere on the page) just to flip one checkbox.
+      this.state.notesForm.costTracked = checked;
+      const costInput = root.querySelector('[data-bind="notesForm.cost"]');
+      if (costInput) costInput.disabled = !checked;
     }
 
     async submitNotes(assetTag) {
       const f = this.state.notesForm;
+      const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
+      const payload = { notes: f.notes };
+      if (isAdmin) { payload.costTracked = !!f.costTracked; payload.cost = f.cost; }
       try {
-        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, {
-          notes: f.notes, costTracked: !!f.costTracked, cost: f.cost,
-        });
+        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, payload);
         this.applyAssetUpdate(updated);
         this.setState({ notesForm: this.notesFormFromAsset(updated) });
         this.showToast(`${assetTag} notes saved`);
@@ -490,13 +497,21 @@
       }
     }
 
+    userErrorMessage(e, fallback) {
+      const code = e.data && e.data.error;
+      if (code === 'cannot_modify_self') return "You can't change your own role or active status";
+      if (code === 'last_admin') return 'This is the last active admin — promote/enable another admin first';
+      return fallback;
+    }
+
     async changeUserRole(id, role) {
       try {
         const updated = await Api.patch(`/api/users/${id}`, { role });
         this.setState((s) => ({ users: s.users.map((u) => (u.id === updated.id ? updated : u)) }));
         this.showToast(`Role updated for ${updated.email}`);
       } catch (e) {
-        this.showToast('Failed to update role');
+        this.setState((s) => ({ users: s.users.map((u) => u) }));
+        this.showToast(this.userErrorMessage(e, 'Failed to update role'));
       }
     }
 
@@ -508,7 +523,7 @@
         this.setState((s) => ({ users: s.users.map((u) => (u.id === updated.id ? updated : u)) }));
         this.showToast(`${updated.email} ${updated.active ? 'enabled' : 'disabled'}`);
       } catch (e) {
-        this.showToast('Failed to update user');
+        this.showToast(this.userErrorMessage(e, 'Failed to update user'));
       }
     }
 
@@ -535,7 +550,8 @@
         this.setState((s) => ({ users: s.users.filter((u) => u.id !== Number(id)) }));
         this.showToast(`${user.email} deleted`);
       } catch (e) {
-        this.showToast(e.data && e.data.error === 'cannot_delete_self' ? 'You cannot delete your own account' : 'Failed to delete user');
+        const code = e.data && e.data.error;
+        this.showToast(code === 'cannot_delete_self' ? 'You cannot delete your own account' : this.userErrorMessage(e, 'Failed to delete user'));
       }
     }
 
@@ -657,8 +673,10 @@
 
     async resetOwnMfa() {
       if (!window.confirm('Reset your MFA enrollment? You will be signed out and must set up a new authenticator on next login.')) return;
+      const currentPassword = window.prompt('Confirm your current password to disable MFA:');
+      if (!currentPassword) return;
       try {
-        await Api.post('/api/auth/mfa/reset-self');
+        await Api.post('/api/auth/mfa/reset-self', { currentPassword });
         this.setState({
           currentUser: null, assets: [], ready: false, screen: 'overview',
           authScreen: 'login', authForm: { email: '', password: '' },
@@ -666,7 +684,7 @@
           mfaForm: { token: '' }, mfaError: '',
         });
       } catch (e) {
-        this.showToast('Failed to reset MFA');
+        this.showToast(e.data && e.data.error === 'invalid_current_password' ? 'Incorrect password' : 'Failed to reset MFA');
       }
     }
 
@@ -946,6 +964,7 @@
         isMobile, currentSim, availableSims,
         assignForm: this.state.assignForm, assigneeNames,
         notesForm: this.state.notesForm,
+        isAdmin,
       };
     }
 
@@ -1073,7 +1092,7 @@
           case 'deleteUser': this.deleteUser(id); break;
           case 'submitAssignment': this.submitAssignment(id); break;
           case 'unassignAsset': this.unassignAsset(id); break;
-          case 'toggleCostTracked': this.toggleCostTracked(); break;
+          case 'toggleCostTracked': this.toggleCostTracked(el.checked); break;
           case 'submitNotes': this.submitNotes(id); break;
           case 'goSimCards': this.goSimCards(); break;
           case 'submitCreateSim': this.submitCreateSim(); break;
@@ -1758,19 +1777,23 @@
           </div>
           <div class="form-group">
             <div class="form-label">Company</div>
-            <select class="form-select" data-bind="assignForm.company">
-              <option value="" ${!f.company ? 'selected' : ''}>—</option>
-              ${COMPANIES.map((c) => `<option value="${escapeHtml(c)}" ${c === f.company ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
-            </select>
+            ${sel.isAdmin ? `
+              <select class="form-select" data-bind="assignForm.company">
+                <option value="" ${!f.company ? 'selected' : ''}>—</option>
+                ${COMPANIES.map((c) => `<option value="${escapeHtml(c)}" ${c === f.company ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+              </select>
+            ` : `<div class="drawer-field-value" style="padding-top:9px;">${escapeHtml(f.company || '—')} <span class="cell-dim" style="font-size:11px;">(admin only)</span></div>`}
           </div>
         </div>
         <div class="form-row" style="margin-bottom:14px;">
           <div class="form-group">
             <div class="form-label">Device Blocked</div>
-            <select class="form-select" data-bind="assignForm.deviceBlocked">
-              <option value="no" ${!f.deviceBlocked ? 'selected' : ''}>No</option>
-              <option value="yes" ${f.deviceBlocked ? 'selected' : ''}>Yes</option>
-            </select>
+            ${sel.isAdmin ? `
+              <select class="form-select" data-bind="assignForm.deviceBlocked">
+                <option value="no" ${!f.deviceBlocked ? 'selected' : ''}>No</option>
+                <option value="yes" ${f.deviceBlocked ? 'selected' : ''}>Yes</option>
+              </select>
+            ` : `<div class="drawer-field-value" style="padding-top:9px;">${f.deviceBlocked ? 'Yes' : 'No'} <span class="cell-dim" style="font-size:11px;">(admin only)</span></div>`}
           </div>
           <div class="form-group">
             <div class="form-label">Agreement Signed</div>
@@ -1805,17 +1828,24 @@
         <div class="form-group">
           <textarea class="form-input" rows="3" data-bind="notesForm.notes" placeholder="Anything worth noting about this asset…">${escapeHtml(f.notes)}</textarea>
         </div>
-        <div class="form-row" style="align-items:flex-end;margin-bottom:14px;">
-          <div class="form-group" style="flex:0 0 auto;">
-            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;padding-bottom:9px;">
-              <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleCostTracked" ${f.costTracked ? 'checked' : ''}>
-              Cost
-            </label>
+        ${sel.isAdmin ? `
+          <div class="form-row" style="align-items:flex-end;margin-bottom:14px;">
+            <div class="form-group" style="flex:0 0 auto;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;padding-bottom:9px;">
+                <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleCostTracked" ${f.costTracked ? 'checked' : ''}>
+                Cost
+              </label>
+            </div>
+            <div class="form-group">
+              <input class="form-input mono" type="number" step="0.01" min="0" data-bind="notesForm.cost" value="${escapeHtml(f.cost)}" placeholder="0.00" ${f.costTracked ? '' : 'disabled'}>
+            </div>
           </div>
-          <div class="form-group">
-            <input class="form-input mono" type="number" step="0.01" min="0" data-bind="notesForm.cost" value="${escapeHtml(f.cost)}" placeholder="0.00" ${f.costTracked ? '' : 'disabled'}>
+        ` : `
+          <div class="drawer-field-row" style="margin-bottom:14px;">
+            <div class="drawer-field-label">Cost</div>
+            <div class="drawer-field-value">${f.costTracked && f.cost !== '' ? '£' + escapeHtml(f.cost) : '—'} <span class="cell-dim" style="font-size:11px;">(admin only)</span></div>
           </div>
-        </div>
+        `}
         <button class="btn-submit" data-act="submitNotes" data-id="${escapeHtml(sel.assetTag)}">Save Notes</button>
       </div>
     `;

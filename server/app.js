@@ -14,7 +14,30 @@ const reportsRoutes = require('./routes/reports.routes');
 
 const app = express();
 
-if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (!process.env.SESSION_SECRET) {
+  if (isProduction) {
+    throw new Error(
+      'SESSION_SECRET is not set. Refusing to start in production with the insecure default secret — ' +
+      'set SESSION_SECRET in .env (e.g. `openssl rand -hex 32`) before deploying.'
+    );
+  }
+  console.warn(
+    'WARNING: SESSION_SECRET is not set — using an insecure development-only default. ' +
+    'This MUST be set to a long random value before this app is exposed to anyone but you.'
+  );
+}
+
+if (!isProduction) {
+  console.warn(
+    'WARNING: NODE_ENV is not "production" — session cookies are being sent without the Secure flag ' +
+    'and the app will not trust a reverse proxy\'s client IP for rate limiting. If this is a real ' +
+    'deployment (not your own machine), set NODE_ENV=production and serve the app over HTTPS.'
+  );
+}
+
+if (isProduction) app.set('trust proxy', 1);
 
 app.use(helmet());
 app.use(express.json({ limit: '2mb' }));
@@ -28,7 +51,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProduction,
     maxAge: 12 * 60 * 60 * 1000,
   },
 }));

@@ -8,6 +8,14 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, 'asset-register.db');
 const db = new DatabaseSync(DB_PATH);
 
+// This file holds password hashes, session data, and MFA secrets — restrict
+// it to the owner only. No-op-ish on Windows (no POSIX permission bits), but
+// matters on the Linux deployment. Best-effort: never block startup on it.
+try {
+  fs.chmodSync(DATA_DIR, 0o700);
+  fs.chmodSync(DB_PATH, 0o600);
+} catch (e) { /* ignore — e.g. unsupported on this platform/filesystem */ }
+
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 

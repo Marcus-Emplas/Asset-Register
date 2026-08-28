@@ -83,7 +83,13 @@ router.post('/reset-password', passwordResetLimiter, async (req, res, next) => {
     if (pwErrors.length) return res.status(400).json({ error: 'validation_failed', fields: { newPassword: pwErrors.join('; ') } });
 
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
-    if (!user || !user.active) return res.status(401).json({ error: 'invalid_or_expired_code' });
+    if (!user || !user.active) {
+      // Do the same bcrypt work a real user would incur below, so responding
+      // for a nonexistent account takes the same time as a wrong code for a
+      // real one — otherwise the timing difference leaks which emails exist.
+      await bcrypt.compare(String(code), DUMMY_HASH);
+      return res.status(401).json({ error: 'invalid_or_expired_code' });
+    }
 
     const pending = db.prepare(
       'SELECT * FROM password_resets WHERE user_id = ? AND used = 0 AND expires_at > ? ORDER BY id DESC'
@@ -168,8 +174,15 @@ router.post('/change-password', requireAuth, mfaLimiter, async (req, res, next) 
   }
 });
 
-router.post('/mfa/reset-self', requireAuth, mfaLimiter, (req, res, next) => {
+router.post('/mfa/reset-self', requireAuth, mfaLimiter, async (req, res, next) => {
   try {
+    const { currentPassword } = req.body || {};
+    if (!currentPassword) return res.status(400).json({ error: 'missing_fields' });
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const ok = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'invalid_current_password' });
+
     db.prepare('UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ?').run(req.user.id);
     req.session.destroy((err) => {
       if (err) return next(err);

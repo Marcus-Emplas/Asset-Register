@@ -13,6 +13,14 @@ function publicUser(row) {
   };
 }
 
+// True if `existing` is currently a counted active admin and this change would
+// leave zero active admins in the system (excluding `existing` from the count).
+function wouldRemoveLastAdmin(existing) {
+  if (existing.role !== 'admin' || !existing.active) return false;
+  const { n } = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1 AND id != ?").get(existing.id);
+  return n === 0;
+}
+
 router.use(requireRole('admin'));
 
 router.get('/', (req, res) => {
@@ -25,6 +33,7 @@ router.post('/', (req, res) => {
   const cleanEmail = (email || '').toLowerCase().trim();
 
   if (!cleanEmail) return res.status(400).json({ error: 'validation_failed', fields: { email: 'Email is required' } });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: 'validation_failed', fields: { email: 'Enter a valid email address' } });
   if (!['admin', 'standard'].includes(role)) return res.status(400).json({ error: 'validation_failed', fields: { role: 'Role must be admin or standard' } });
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(cleanEmail)) {
     return res.status(400).json({ error: 'validation_failed', fields: { email: 'Email already in use' } });
@@ -48,11 +57,17 @@ router.patch('/:id', (req, res) => {
 
   const { role, active, resetMfa } = req.body || {};
 
+  if (role !== undefined || active !== undefined) {
+    if (req.user.id === id) return res.status(400).json({ error: 'cannot_modify_self' });
+  }
+
   if (role !== undefined) {
     if (!['admin', 'standard'].includes(role)) return res.status(400).json({ error: 'validation_failed', fields: { role: 'Role must be admin or standard' } });
+    if (role !== 'admin' && wouldRemoveLastAdmin(existing)) return res.status(400).json({ error: 'last_admin' });
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
   }
   if (active !== undefined) {
+    if (!active && wouldRemoveLastAdmin(existing)) return res.status(400).json({ error: 'last_admin' });
     db.prepare('UPDATE users SET active = ? WHERE id = ?').run(active ? 1 : 0, id);
   }
   if (resetMfa) {
@@ -68,6 +83,7 @@ router.delete('/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ error: 'not_found' });
   if (req.user.id === id) return res.status(400).json({ error: 'cannot_delete_self' });
+  if (wouldRemoveLastAdmin(existing)) return res.status(400).json({ error: 'last_admin' });
 
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
   res.json({ status: 'ok' });

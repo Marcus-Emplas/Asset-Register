@@ -198,6 +198,8 @@ router.post('/import', requireRole('admin'), (req, res) => {
   res.json({ inserted: inserted.length, skipped });
 });
 
+const ASSET_PATCH_ADMIN_ONLY_FIELDS = ['company', 'deviceBlocked', 'costTracked', 'cost'];
+
 router.patch('/:id', (req, res) => {
   const tag = req.params.id;
   const existing = fetchOneAsset(tag);
@@ -205,6 +207,10 @@ router.patch('/:id', (req, res) => {
   if (existing.status === 'Retired') return res.status(400).json({ error: 'asset_retired' });
 
   const body = req.body || {};
+  const isAdmin = !!(req.user && req.user.role === 'admin');
+  const touchesAdminOnlyField = ASSET_PATCH_ADMIN_ONLY_FIELDS.some((f) => body[f] !== undefined);
+  if (touchesAdminOnlyField && !isAdmin) return res.status(403).json({ error: 'forbidden' });
+
   const today = todayIso();
   const updates = {};
   const historyLines = [];
