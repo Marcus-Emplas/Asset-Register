@@ -57,12 +57,12 @@ router.post('/', requireRole('admin'), (req, res) => {
   db.prepare(`
     INSERT INTO assets (
       asset_tag, item_type, model, serial_number, express_tag, mac_address, ip_address, imei,
-      wsus_group, telephone_number, po_number, device_blocked, location,
+      wsus_group, telephone_number, po_number, device_blocked, location, company,
       first_name, last_name, date_acquired, date_deployed, return_date, date_retired,
       notes, agreement_signed, supplier, status
     ) VALUES (
       @assetTag, @itemType, @model, @serialNumber, '', '', @ipAddress, '',
-      '', '', @poNumber, 0, @location,
+      '', '', @poNumber, 0, @location, @company,
       @firstName, @lastName, @dateAcquired, @dateDeployed, '', '',
       '', 0, @supplier, @status
     )
@@ -72,6 +72,7 @@ router.post('/', requireRole('admin'), (req, res) => {
     ipAddress: (body.ipAddress || '').trim(),
     poNumber: (body.poNumber || '').trim() || '—',
     location: body.location || 'London HQ',
+    company: (body.company || '').trim(),
     firstName, lastName,
     dateAcquired: today,
     dateDeployed: firstName ? today : '',
@@ -159,12 +160,12 @@ router.post('/import', requireRole('admin'), (req, res) => {
       db.prepare(`
         INSERT INTO assets (
           asset_tag, item_type, model, serial_number, express_tag, mac_address, ip_address, imei,
-          wsus_group, telephone_number, po_number, device_blocked, location,
+          wsus_group, telephone_number, po_number, device_blocked, location, company,
           first_name, last_name, date_acquired, date_deployed, return_date, date_retired,
           notes, agreement_signed, supplier, status
         ) VALUES (
           @assetTag, @itemType, @model, @serialNumber, '', '', @ipAddress, '',
-          '', '', @poNumber, @deviceBlocked, @location,
+          '', '', @poNumber, @deviceBlocked, @location, @company,
           @firstName, @lastName, @dateAcquired, @dateDeployed, @returnDate, @dateRetired,
           '', @agreementSigned, @supplier, @status
         )
@@ -174,6 +175,7 @@ router.post('/import', requireRole('admin'), (req, res) => {
         ipAddress: (row.ipAddress || '').trim(),
         poNumber: (row.poNumber || '').trim() || '—',
         location: row.location || 'London HQ',
+        company: (row.company || '').trim(),
         firstName, lastName,
         dateAcquired: row.dateAcquired || today,
         dateDeployed: row.dateDeployed || '',
@@ -194,6 +196,69 @@ router.post('/import', requireRole('admin'), (req, res) => {
   }
 
   res.json({ inserted: inserted.length, skipped });
+});
+
+router.patch('/:id', (req, res) => {
+  const tag = req.params.id;
+  const existing = fetchOneAsset(tag);
+  if (!existing) return res.status(404).json({ error: 'not_found' });
+  if (existing.status === 'Retired') return res.status(400).json({ error: 'asset_retired' });
+
+  const body = req.body || {};
+  const today = todayIso();
+  const updates = {};
+  const historyLines = [];
+
+  if (body.firstName !== undefined || body.lastName !== undefined) {
+    const firstName = (body.firstName !== undefined ? body.firstName : existing.firstName).trim();
+    const lastName = (body.lastName !== undefined ? body.lastName : existing.lastName).trim();
+    const hadAssignee = !!existing.firstName;
+    const hasAssignee = !!firstName;
+    updates.first_name = firstName;
+    updates.last_name = lastName;
+
+    if (!hadAssignee && hasAssignee) {
+      if (existing.status === 'In Stock') {
+        updates.status = 'In Use';
+        if (!existing.dateDeployed) updates.date_deployed = today;
+      }
+      historyLines.push(`Deployed to ${firstName} ${lastName}`);
+    } else if (hadAssignee && !hasAssignee) {
+      if (existing.status === 'In Use') updates.status = 'In Stock';
+      historyLines.push('Unassigned — returned to stock');
+    } else if (hadAssignee && hasAssignee && (firstName !== existing.firstName || lastName !== existing.lastName)) {
+      historyLines.push(`Reassigned to ${firstName} ${lastName}`);
+    }
+  }
+
+  if (body.location !== undefined) {
+    const location = (body.location || '').trim();
+    if (location && location !== existing.location) {
+      updates.location = location;
+      historyLines.push(`Moved to ${location}`);
+    }
+  }
+
+  if (body.deviceBlocked !== undefined) {
+    const blocked = !!body.deviceBlocked;
+    if (blocked !== existing.deviceBlocked) {
+      updates.device_blocked = blocked ? 1 : 0;
+      historyLines.push(blocked ? 'Device blocked' : 'Device unblocked');
+    }
+  }
+
+  if (body.agreementSigned !== undefined) {
+    updates.agreement_signed = body.agreementSigned ? 1 : 0;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    const setClauses = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+    db.prepare(`UPDATE assets SET ${setClauses}, updated_at = datetime('now') WHERE asset_tag = @assetTag`)
+      .run({ ...updates, assetTag: tag });
+    for (const line of historyLines) addHistory(tag, today, line);
+  }
+
+  res.json(fetchOneAsset(tag));
 });
 
 router.post('/:id/check-in-out', (req, res) => {

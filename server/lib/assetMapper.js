@@ -14,6 +14,7 @@ function rowToAsset(row, historyRows) {
     poNumber: row.po_number,
     deviceBlocked: !!row.device_blocked,
     location: row.location,
+    company: row.company,
     firstName: row.first_name,
     lastName: row.last_name,
     dateAcquired: row.date_acquired,

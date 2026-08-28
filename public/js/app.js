@@ -22,6 +22,7 @@
         screen: 'overview', search: '', statusFilter: [], typeFilter: '', locationFilter: '',
         sortCol: 'assetTag', sortDir: 'asc', page: 1, selectedId: null, drawerOpen: false,
         addOpen: false, form: freshForm(), formErrors: {},
+        assignForm: { assignedName: '', location: '', deviceBlocked: false, agreementSigned: false },
         currentUser: null,
         authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authInfo: '', authSubmitting: false,
         mfaForm: { token: '' }, mfaError: '',
@@ -36,6 +37,7 @@
         simCards: [], simForm: freshSimForm(), simFormErrors: {},
       };
       this._toastTimer = null;
+      this._searchDebounceTimer = null;
     }
 
     async init() {
@@ -81,7 +83,18 @@
     }
 
     setScreen(screen) { this.setState({ screen, drawerOpen: false }); }
-    setSearch(value) { this.setState({ search: value, page: 1, selectedIds: [] }); }
+    setSearch(value) {
+      // Update state immediately but debounce the re-render: rebuilding the
+      // page on every keystroke replaces the search <input> DOM node, which
+      // is what causes the cursor to jump while typing/backspacing. Leaving
+      // the node alone while the user is actively typing lets the browser
+      // handle the cursor natively; the table just catches up once they pause.
+      this.state.search = value;
+      this.state.page = 1;
+      this.state.selectedIds = [];
+      clearTimeout(this._searchDebounceTimer);
+      this._searchDebounceTimer = setTimeout(() => this.render(), 200);
+    }
     toggleStatusFilter(status) {
       this.setState((s) => {
         const next = s.statusFilter.includes(status) ? s.statusFilter.filter((x) => x !== status) : [...s.statusFilter, status];
@@ -107,7 +120,13 @@
         selectedIds: allSelected ? s.selectedIds.filter((id) => !pageIds.includes(id)) : Array.from(new Set([...s.selectedIds, ...pageIds])),
       }));
     }
-    openDetail(id) { this.setState({ selectedId: id, drawerOpen: true }); }
+    openDetail(id) {
+      const asset = this.state.assets.find((a) => a.id === id);
+      this.setState({
+        selectedId: id, drawerOpen: true,
+        assignForm: asset ? this.assignFormFromAsset(asset) : { assignedName: '', location: '', deviceBlocked: false, agreementSigned: false },
+      });
+    }
     closeDetail() { this.setState({ drawerOpen: false }); }
     openAdd() { this.setState({ addOpen: true, formErrors: {} }); }
     closeAdd() { this.setState({ addOpen: false }); }
@@ -226,6 +245,38 @@
 
     applyAssetUpdate(updated) {
       this.setState((s) => ({ assets: s.assets.map((a) => (a.id === updated.id ? updated : a)) }));
+    }
+
+    updateAssignField(field, value) { this.setState((s) => ({ assignForm: { ...s.assignForm, [field]: value } })); }
+
+    async submitAssignment(assetTag) {
+      const f = this.state.assignForm;
+      const name = f.assignedName.trim();
+      const spaceIdx = name.indexOf(' ');
+      const firstName = spaceIdx === -1 ? name : name.slice(0, spaceIdx);
+      const lastName = spaceIdx === -1 ? '' : name.slice(spaceIdx + 1);
+      try {
+        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, {
+          firstName, lastName, location: f.location,
+          deviceBlocked: !!f.deviceBlocked, agreementSigned: !!f.agreementSigned,
+        });
+        this.applyAssetUpdate(updated);
+        this.setState({ assignForm: this.assignFormFromAsset(updated) });
+        this.showToast(`${assetTag} updated`);
+      } catch (e) {
+        this.showToast(e.data && e.data.error === 'asset_retired' ? 'Retired assets cannot be edited' : 'Failed to update asset');
+      }
+    }
+
+    async unassignAsset(assetTag) {
+      try {
+        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, { firstName: '', lastName: '' });
+        this.applyAssetUpdate(updated);
+        this.setState({ assignForm: this.assignFormFromAsset(updated) });
+        this.showToast(`${assetTag} unassigned`);
+      } catch (e) {
+        this.showToast('Failed to unassign');
+      }
     }
 
     async checkInOut(id) {
@@ -736,10 +787,6 @@
           { label: 'IMEI', value: asset.imei || '—' },
           { label: 'Telephone', value: asset.telephoneNumber || '—' }, { label: 'WSUS Group', value: asset.wsusGroup || '—' },
         ] },
-        { title: 'Assignment', fields: [
-          { label: 'Assigned To', value: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '—' }, { label: 'Location', value: asset.location },
-          { label: 'Device Blocked', value: asset.deviceBlocked ? 'Yes' : 'No' }, { label: 'Agreement Signed', value: asset.agreementSigned ? 'Yes' : 'No' },
-        ] },
         { title: 'Lifecycle', fields: [
           { label: 'Supplier', value: asset.supplier }, { label: 'PO Number', value: asset.poNumber },
           { label: 'Date Acquired', value: formatDate(asset.dateAcquired) }, { label: 'Date Deployed', value: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—' },
@@ -761,12 +808,21 @@
       const isMobile = asset.itemType === 'Mobile Phone';
       const currentSim = isMobile ? this.state.simCards.find((sc) => sc.assignedAssetTag === asset.assetTag) || null : null;
       const availableSims = isMobile ? this.state.simCards.filter((sc) => sc.status === 'Available') : [];
+      const assigneeNames = [...new Set(this.state.assets.filter((a) => a.firstName).map((a) => `${a.firstName} ${a.lastName}`))].sort();
       return {
         id: asset.id, assetTag: asset.assetTag, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
         sections, history: [...asset.history].reverse().map((h) => ({ date: formatDate(h.date), text: h.text })),
         actions, isRetired: asset.status === 'Retired',
         isMobile, currentSim, availableSims,
+        assignForm: this.state.assignForm, assigneeNames,
+      };
+    }
+
+    assignFormFromAsset(asset) {
+      return {
+        assignedName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '',
+        location: asset.location, deviceBlocked: asset.deviceBlocked, agreementSigned: asset.agreementSigned,
       };
     }
 
@@ -862,6 +918,8 @@
           case 'toggleUserActive': this.toggleUserActive(id); break;
           case 'resetUserMfa': this.resetUserMfa(id); break;
           case 'deleteUser': this.deleteUser(id); break;
+          case 'submitAssignment': this.submitAssignment(id); break;
+          case 'unassignAsset': this.unassignAsset(id); break;
           case 'goSimCards': this.goSimCards(); break;
           case 'submitCreateSim': this.submitCreateSim(); break;
           case 'unassignSim': this.unassignSim(id); break;
@@ -880,15 +938,24 @@
         const el = e.target;
         const bind = el.getAttribute && el.getAttribute('data-bind');
         if (!bind) return;
-        if (bind === 'search') this.setSearch(el.value);
-        else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
-        else if (bind.startsWith('authForm.')) this.updateAuthField(bind.slice(9), el.value);
-        else if (bind.startsWith('mfaForm.')) this.updateMfaField(bind.slice(8), el.value);
-        else if (bind.startsWith('forgotForm.')) this.updateForgotField(bind.slice(11), el.value);
-        else if (bind.startsWith('resetForm.')) this.updateResetField(bind.slice(10), el.value);
-        else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
-        else if (bind.startsWith('accountForm.')) this.updateAccountField(bind.slice(12), el.value);
-        else if (bind.startsWith('simForm.')) this.updateSimField(bind.slice(8), el.value);
+        if (bind === 'search') { this.setSearch(el.value); return; }
+        // Plain form-field text bindings: write straight into state without
+        // triggering a full-page re-render on every keystroke. The input
+        // already shows what was typed (native browser behavior) — nothing
+        // else on screen reacts to these mid-typing, so a render here would
+        // just rebuild the whole page (sidebar, tables, charts) for no
+        // visible benefit. The next render triggered by any other action
+        // picks up the latest value from state.
+        const s = this.state;
+        if (bind.startsWith('form.')) s.form[bind.slice(5)] = el.value;
+        else if (bind.startsWith('authForm.')) s.authForm[bind.slice(9)] = el.value;
+        else if (bind.startsWith('mfaForm.')) s.mfaForm[bind.slice(8)] = el.value;
+        else if (bind.startsWith('forgotForm.')) s.forgotForm[bind.slice(11)] = el.value;
+        else if (bind.startsWith('resetForm.')) s.resetForm[bind.slice(10)] = el.value;
+        else if (bind.startsWith('userForm.')) s.userForm[bind.slice(9)] = el.value;
+        else if (bind.startsWith('accountForm.')) s.accountForm[bind.slice(12)] = el.value;
+        else if (bind.startsWith('simForm.')) s.simForm[bind.slice(8)] = el.value;
+        else if (bind.startsWith('assignForm.')) s.assignForm[bind.slice(11)] = el.value;
       };
 
       root.onchange = (e) => {
@@ -903,6 +970,10 @@
         else if (bind.startsWith('simForm.')) this.updateSimField(bind.slice(8), el.value);
         else if (bind.startsWith('assignSimRow.')) { if (el.value) this.assignSim(bind.slice(13), el.value); }
         else if (bind.startsWith('assignSim.')) { if (el.value) this.assignSim(el.value, bind.slice(10)); }
+        else if (bind === 'assignForm.deviceBlocked' || bind === 'assignForm.agreementSigned') {
+          this.updateAssignField(bind.slice(11), el.value === 'yes');
+        }
+        else if (bind.startsWith('assignForm.')) this.updateAssignField(bind.slice(11), el.value);
       };
     }
   }
@@ -1390,6 +1461,62 @@
     `;
   }
 
+  function renderAssignmentEditBlock(sel) {
+    const f = sel.assignForm;
+    if (sel.isRetired) {
+      return `
+        <div class="drawer-section">
+          <div class="drawer-section-title">Assignment</div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Assigned To</div><div class="drawer-field-value">${escapeHtml(f.assignedName || '—')}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Location</div><div class="drawer-field-value">${escapeHtml(f.location)}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Device Blocked</div><div class="drawer-field-value">${f.deviceBlocked ? 'Yes' : 'No'}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Agreement Signed</div><div class="drawer-field-value">${f.agreementSigned ? 'Yes' : 'No'}</div></div>
+        </div>
+      `;
+    }
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Assignment</div>
+        <div class="form-group">
+          <div class="form-label">Assigned To</div>
+          <input class="form-input" type="text" list="assignee-names-list" data-bind="assignForm.assignedName" value="${escapeHtml(f.assignedName)}" placeholder="Type a name…">
+          <datalist id="assignee-names-list">
+            ${sel.assigneeNames.map((n) => `<option value="${escapeHtml(n)}"></option>`).join('')}
+          </datalist>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">Location</div>
+            <select class="form-select" data-bind="assignForm.location">
+              ${LOCATIONS.map((l) => `<option value="${escapeHtml(l)}" ${l === f.location ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"></div>
+        </div>
+        <div class="form-row" style="margin-bottom:14px;">
+          <div class="form-group">
+            <div class="form-label">Device Blocked</div>
+            <select class="form-select" data-bind="assignForm.deviceBlocked">
+              <option value="no" ${!f.deviceBlocked ? 'selected' : ''}>No</option>
+              <option value="yes" ${f.deviceBlocked ? 'selected' : ''}>Yes</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">Agreement Signed</div>
+            <select class="form-select" data-bind="assignForm.agreementSigned">
+              <option value="no" ${!f.agreementSigned ? 'selected' : ''}>No</option>
+              <option value="yes" ${f.agreementSigned ? 'selected' : ''}>Yes</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-submit" data-act="submitAssignment" data-id="${escapeHtml(sel.assetTag)}">Save Changes</button>
+          ${f.assignedName ? `<button class="btn-ghost" data-act="unassignAsset" data-id="${escapeHtml(sel.assetTag)}">Unassign</button>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   function renderDrawer(sel) {
     return `
       <div class="overlay" data-act="closeDetail"></div>
@@ -1412,6 +1539,7 @@
             `).join('')}
           </div>
         `).join('')}
+        ${renderAssignmentEditBlock(sel)}
         ${sel.isMobile ? renderSimAssignBlock(sel) : ''}
         <div class="drawer-section-title">History</div>
         ${sel.history.map((h) => `

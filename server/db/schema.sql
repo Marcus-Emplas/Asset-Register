@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS assets (
   po_number        TEXT DEFAULT '',
   device_blocked   INTEGER NOT NULL DEFAULT 0,
   location         TEXT NOT NULL,
+  company          TEXT DEFAULT '',
   first_name       TEXT DEFAULT '',
   last_name        TEXT DEFAULT '',
   date_acquired    TEXT DEFAULT '',

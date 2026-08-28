@@ -18,5 +18,8 @@ const assetColumns = db.prepare('PRAGMA table_info(assets)').all().map((c) => c.
 if (!assetColumns.includes('ip_address')) {
   db.exec("ALTER TABLE assets ADD COLUMN ip_address TEXT DEFAULT ''");
 }
+if (!assetColumns.includes('company')) {
+  db.exec("ALTER TABLE assets ADD COLUMN company TEXT DEFAULT ''");
+}
 
 module.exports = db;
