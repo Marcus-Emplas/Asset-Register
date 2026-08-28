@@ -15,25 +15,6 @@
     return `rgba(${r},${g},${b},0.14)`;
   }
 
-  const REPORT_GROUP_FIELDS = [
-    { value: 'itemType', label: 'Item Type' },
-    { value: 'location', label: 'Location' },
-    { value: 'company', label: 'Company' },
-    { value: 'supplier', label: 'Supplier' },
-    { value: 'status', label: 'Status' },
-  ];
-  const REPORT_EMPTY_FIELDS = [
-    { value: 'company', label: 'Company' },
-    { value: 'serialNumber', label: 'Serial Number' },
-    { value: 'poNumber', label: 'PO Number' },
-    { value: 'macAddress', label: 'MAC Address' },
-    { value: 'ipAddress', label: 'IP Address' },
-    { value: 'telephoneNumber', label: 'Telephone' },
-    { value: 'expressTag', label: 'Express Tag' },
-    { value: 'wsusGroup', label: 'WSUS Group' },
-    { value: 'notes', label: 'Notes' },
-  ];
-  function isEmptyValue(v) { return !v || v === '—'; }
   function fieldLabel(value) {
     const opt = ASSET_FIELD_OPTIONS.find((f) => f.value === value);
     return opt ? opt.label : value;
@@ -47,7 +28,8 @@
         sortCol: 'assetTag', sortDir: 'asc', page: 1, selectedId: null, drawerOpen: false,
         addOpen: false, form: freshForm(), formErrors: {},
         assignForm: { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
-        reportBuilder: { type: 'groupBy', field: 'itemType' },
+        notesForm: { notes: '', costTracked: false, cost: '' },
+        reportBuilder: { customReportId: null },
         customReports: [],
         newReportOpen: false, newReportForm: { name: '', fields: [] }, newReportErrors: {},
         exportPickerOpen: false,
@@ -161,6 +143,7 @@
       this.setState({
         selectedId: id, drawerOpen: true,
         assignForm: asset ? this.assignFormFromAsset(asset) : { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
+        notesForm: asset ? this.notesFormFromAsset(asset) : { notes: '', costTracked: false, cost: '' },
       });
     }
     closeDetail() { this.setState({ drawerOpen: false }); }
@@ -315,6 +298,24 @@
       }
     }
 
+    toggleCostTracked() {
+      this.setState((s) => ({ notesForm: { ...s.notesForm, costTracked: !s.notesForm.costTracked } }));
+    }
+
+    async submitNotes(assetTag) {
+      const f = this.state.notesForm;
+      try {
+        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, {
+          notes: f.notes, costTracked: !!f.costTracked, cost: f.cost,
+        });
+        this.applyAssetUpdate(updated);
+        this.setState({ notesForm: this.notesFormFromAsset(updated) });
+        this.showToast(`${assetTag} notes saved`);
+      } catch (e) {
+        this.showToast(e.data && e.data.error === 'asset_retired' ? 'Retired assets cannot be edited' : 'Failed to save notes');
+      }
+    }
+
     async checkInOut(id) {
       const asset = this.state.assets.find((x) => x.id === id);
       if (!asset) return;
@@ -383,15 +384,7 @@
 
     setDeprecatedPage(page) { this.setState({ deprecatedPage: page }); }
 
-    setReportTypeValue(value) {
-      if (value.startsWith('custom:')) {
-        this.setState({ reportBuilder: { type: 'custom', customReportId: Number(value.slice(7)) } });
-      } else {
-        const fieldOptions = value === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
-        this.setState({ reportBuilder: { type: value, field: fieldOptions[0].value } });
-      }
-    }
-    setReportField(field) { this.setState((s) => ({ reportBuilder: { ...s.reportBuilder, field } })); }
+    setSelectedReport(id) { this.setState({ reportBuilder: { customReportId: id ? Number(id) : null } }); }
 
     openNewReport() { this.setState({ newReportOpen: true, newReportForm: { name: '', fields: [] }, newReportErrors: {} }); }
     closeNewReport() { this.setState({ newReportOpen: false }); }
@@ -400,6 +393,16 @@
       this.setState((s) => {
         const has = s.newReportForm.fields.includes(field);
         return { newReportForm: { ...s.newReportForm, fields: has ? s.newReportForm.fields.filter((f) => f !== field) : [...s.newReportForm.fields, field] } };
+      });
+    }
+
+    toggleCostingField() {
+      this.setState((s) => {
+        const has = s.newReportForm.fields.includes('cost');
+        const fields = has
+          ? s.newReportForm.fields.filter((f) => f !== 'cost' && f !== 'costTracked')
+          : [...s.newReportForm.fields, 'costTracked', 'cost'];
+        return { newReportForm: { ...s.newReportForm, fields } };
       });
     }
 
@@ -414,7 +417,7 @@
         this.setState((s) => ({
           customReports: [...s.customReports, created].sort((a, b) => (a.name < b.name ? -1 : 1)),
           newReportOpen: false, newReportForm: { name: '', fields: [] }, newReportErrors: {},
-          reportBuilder: { type: 'custom', customReportId: created.id },
+          reportBuilder: { customReportId: created.id },
         }));
         this.showToast(`Report "${created.name}" saved`);
       } catch (e) {
@@ -431,8 +434,7 @@
         await Api.delete(`/api/reports/${id}`);
         this.setState((s) => ({
           customReports: s.customReports.filter((r) => r.id !== Number(id)),
-          reportBuilder: s.reportBuilder.type === 'custom' && s.reportBuilder.customReportId === Number(id)
-            ? { type: 'groupBy', field: 'itemType' } : s.reportBuilder,
+          reportBuilder: s.reportBuilder.customReportId === Number(id) ? { customReportId: null } : s.reportBuilder,
         }));
         this.showToast(`Report "${report.name}" deleted`);
       } catch (e) {
@@ -894,25 +896,9 @@
         customReports: st.customReports,
         newReportOpen: st.newReportOpen, newReportForm: st.newReportForm, newReportErrors: st.newReportErrors,
         exportPickerOpen: st.exportPickerOpen,
-        ...this.computeReportBuilderVm(all),
+        reportBuilder: st.reportBuilder,
+        selectedCustomReport: st.customReports.find((r) => r.id === st.reportBuilder.customReportId) || st.customReports[0] || null,
       };
-    }
-
-    computeReportBuilderVm(all) {
-      const rb = this.state.reportBuilder;
-      if (rb.type === 'custom') {
-        const report = this.state.customReports.find((r) => r.id === rb.customReportId) || null;
-        return { reportBuilder: rb, reportFieldOptions: [], reportGroups: null, reportRows: null, selectedCustomReport: report };
-      }
-      const fieldOptions = rb.type === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
-      const field = fieldOptions.some((f) => f.value === rb.field) ? rb.field : fieldOptions[0].value;
-      let reportGroups = null, reportRows = null;
-      if (rb.type === 'groupBy') {
-        reportGroups = groupCounts(all, field).map((g) => ({ ...g, pct: Math.round((g.count / (all.length || 1)) * 100) }));
-      } else {
-        reportRows = all.filter((a) => isEmptyValue(a[field]));
-      }
-      return { reportBuilder: rb, reportFieldOptions: fieldOptions, reportGroups, reportRows, selectedCustomReport: null };
     }
 
     buildDetail(id) {
@@ -959,6 +945,7 @@
         actions, isRetired: asset.status === 'Retired',
         isMobile, currentSim, availableSims,
         assignForm: this.state.assignForm, assigneeNames,
+        notesForm: this.state.notesForm,
       };
     }
 
@@ -967,6 +954,14 @@
         assignedName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '',
         location: asset.location, company: asset.company || '',
         deviceBlocked: asset.deviceBlocked, agreementSigned: asset.agreementSigned,
+      };
+    }
+
+    notesFormFromAsset(asset) {
+      return {
+        notes: asset.notes || '',
+        costTracked: asset.costTracked,
+        cost: asset.cost !== null && asset.cost !== undefined ? String(asset.cost) : '',
       };
     }
 
@@ -1018,6 +1013,7 @@
           case 'closeNewReport': this.closeNewReport(); break;
           case 'submitNewReport': this.submitNewReport(); break;
           case 'toggleReportField': this.toggleReportField(el.getAttribute('data-field')); break;
+          case 'toggleCostingField': this.toggleCostingField(); break;
           case 'deleteCustomReport': this.deleteCustomReport(id); break;
           case 'openExportPicker': this.openExportPicker(); break;
           case 'closeExportPicker': this.closeExportPicker(); break;
@@ -1077,6 +1073,8 @@
           case 'deleteUser': this.deleteUser(id); break;
           case 'submitAssignment': this.submitAssignment(id); break;
           case 'unassignAsset': this.unassignAsset(id); break;
+          case 'toggleCostTracked': this.toggleCostTracked(); break;
+          case 'submitNotes': this.submitNotes(id); break;
           case 'goSimCards': this.goSimCards(); break;
           case 'submitCreateSim': this.submitCreateSim(); break;
           case 'unassignSim': this.unassignSim(id); break;
@@ -1114,6 +1112,7 @@
         else if (bind.startsWith('accountForm.')) s.accountForm[bind.slice(12)] = el.value;
         else if (bind.startsWith('simForm.')) s.simForm[bind.slice(8)] = el.value;
         else if (bind.startsWith('assignForm.')) s.assignForm[bind.slice(11)] = el.value;
+        else if (bind.startsWith('notesForm.')) s.notesForm[bind.slice(10)] = el.value;
         else if (bind.startsWith('newReportForm.')) s.newReportForm[bind.slice(14)] = el.value;
       };
 
@@ -1123,8 +1122,7 @@
         if (!bind) return;
         if (bind === 'typeFilter') this.setTypeFilter(el.value);
         else if (bind === 'locationFilter') this.setLocationFilter(el.value);
-        else if (bind === 'reportType') this.setReportTypeValue(el.value);
-        else if (bind === 'reportField') this.setReportField(el.value);
+        else if (bind === 'selectedReportId') this.setSelectedReport(el.value);
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
         else if (bind.startsWith('userRole.')) this.changeUserRole(bind.slice(9), el.value);
@@ -1545,24 +1543,29 @@
     `;
   }
 
+  function reportFieldChipLabels(fields) {
+    const hasCosting = fields.includes('cost') || fields.includes('costTracked');
+    const labels = fields.filter((f) => f !== 'cost' && f !== 'costTracked').map(fieldLabel);
+    if (hasCosting) labels.push('Costing');
+    return labels;
+  }
+
   function renderCustomReportPreview(vm) {
     const report = vm.selectedCustomReport;
     if (!report) return `<div class="cell-dim">No saved reports yet — click "New Report" to create one.</div>`;
+    const chipLabels = reportFieldChipLabels(report.fields);
     return `
       <div class="cell-dim" style="margin-bottom:10px;">
-        Includes ${report.fields.length} field${report.fields.length === 1 ? '' : 's'} across all ${vm.donutTotal} assets. Use the Export CSV button at the top of the page to download it.
+        Includes ${chipLabels.length} field${chipLabels.length === 1 ? '' : 's'} across all ${vm.donutTotal} assets. Use the Export CSV button at the top of the page to download it.
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
-        ${report.fields.map((f) => `<span class="status-pill" style="background:rgba(79,163,247,0.14);color:#4FA3F7;">${escapeHtml(fieldLabel(f))}</span>`).join('')}
+        ${chipLabels.map((label) => `<span class="status-pill" style="background:rgba(79,163,247,0.14);color:#4FA3F7;">${escapeHtml(label)}</span>`).join('')}
       </div>
       <button class="btn-ghost" style="border-color:#F2635B;color:#F2635B;" data-act="deleteCustomReport" data-id="${report.id}">Delete Report</button>
     `;
   }
 
   function renderCustomReportBuilder(vm) {
-    const rb = vm.reportBuilder;
-    const typeValue = rb.type === 'custom' ? `custom:${rb.customReportId}` : rb.type;
-    const cols = '118px 96px 1fr 140px';
     return `
       <div class="panel" style="margin-top:16px;">
         <div class="page-header-row" style="margin-bottom:16px;">
@@ -1570,56 +1573,15 @@
           <div class="spacer"></div>
           <button class="btn-ghost" data-act="openNewReport">New Report</button>
         </div>
-        <div class="form-row" style="margin-bottom:16px;">
-          <div class="form-group">
-            <div class="form-label">Report Type</div>
-            <select class="form-select" data-bind="reportType">
-              <option value="groupBy" ${rb.type === 'groupBy' ? 'selected' : ''}>Group &amp; count assets by field</option>
-              <option value="emptyField" ${rb.type === 'emptyField' ? 'selected' : ''}>Find assets with an empty field</option>
-              ${vm.customReports.length ? `
-                <optgroup label="Saved Reports">
-                  ${vm.customReports.map((r) => `<option value="custom:${r.id}" ${typeValue === `custom:${r.id}` ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
-                </optgroup>
-              ` : ''}
+        ${vm.customReports.length ? `
+          <div class="form-group" style="margin-bottom:16px;max-width:340px;">
+            <div class="form-label">Saved Report</div>
+            <select class="form-select" data-bind="selectedReportId">
+              ${vm.customReports.map((r) => `<option value="${r.id}" ${vm.reportBuilder.customReportId === r.id ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
             </select>
           </div>
-          ${rb.type !== 'custom' ? `
-            <div class="form-group">
-              <div class="form-label">Field</div>
-              <select class="form-select" data-bind="reportField">
-                ${vm.reportFieldOptions.map((f) => `<option value="${f.value}" ${f.value === rb.field ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
-              </select>
-            </div>
-          ` : ''}
-        </div>
-        ${rb.type === 'groupBy' ? `
-          ${vm.reportGroups.length ? vm.reportGroups.map((g) => `
-            <div class="bar-row">
-              <div class="bar-label wide">${escapeHtml(g.label)}</div>
-              <div class="bar-track"><div class="bar-fill" style="background:#4FA3F7;width:${g.pct}%;"></div></div>
-              <div class="bar-count">${g.count}</div>
-            </div>
-          `).join('') : `<div class="cell-dim">No data.</div>`}
-        ` : rb.type === 'emptyField' ? `
-          <div class="cell-dim" style="margin-bottom:10px;">
-            ${vm.reportRows.length} asset${vm.reportRows.length === 1 ? '' : 's'} with an empty ${escapeHtml(vm.reportFieldOptions.find((f) => f.value === rb.field).label)} field${vm.reportRows.length > 50 ? ' — showing first 50' : ''}.
-          </div>
-          ${vm.reportRows.length ? `
-            <div class="table-header" style="grid-template-columns:${cols};">
-              <div>TAG</div><div>TYPE</div><div>MODEL</div><div>LOCATION</div>
-            </div>
-            <div class="table-body" style="max-height:320px;">
-              ${vm.reportRows.slice(0, 50).map((a) => `
-                <div class="table-row" style="grid-template-columns:${cols};" data-act="openDetail" data-id="${escapeHtml(a.id)}">
-                  <div class="cell-mono">${escapeHtml(a.assetTag)}</div>
-                  <div class="cell-dim">${escapeHtml(a.itemType)}</div>
-                  <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(a.model)}</div>
-                  <div class="cell-dim cell-ellipsis">${escapeHtml(a.location)}</div>
-                </div>
-              `).join('')}
-            </div>
-          ` : `<div class="cell-dim">No assets have this field empty.</div>`}
-        ` : renderCustomReportPreview(vm)}
+        ` : ''}
+        ${renderCustomReportPreview(vm)}
       </div>
     `;
   }
@@ -1646,6 +1608,10 @@
               </label>
             `).join('')}
           </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;margin-bottom:8px;">
+            <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleCostingField" ${vm.newReportForm.fields.includes('cost') ? 'checked' : ''}>
+            Costing
+          </label>
           ${vm.newReportErrors.fields ? `<div class="form-error">${escapeHtml(vm.newReportErrors.fields)}</div>` : ''}
           <div class="modal-actions">
             <button class="btn-secondary" data-act="closeNewReport">Cancel</button>
@@ -1822,6 +1788,39 @@
     `;
   }
 
+  function renderNotesEditBlock(sel) {
+    const f = sel.notesForm;
+    if (sel.isRetired) {
+      return `
+        <div class="drawer-section">
+          <div class="drawer-section-title">Notes</div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Notes</div><div class="drawer-field-value">${escapeHtml(f.notes || '—')}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Cost</div><div class="drawer-field-value">${f.costTracked && f.cost !== '' ? '£' + escapeHtml(f.cost) : '—'}</div></div>
+        </div>
+      `;
+    }
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Notes</div>
+        <div class="form-group">
+          <textarea class="form-input" rows="3" data-bind="notesForm.notes" placeholder="Anything worth noting about this asset…">${escapeHtml(f.notes)}</textarea>
+        </div>
+        <div class="form-row" style="align-items:flex-end;margin-bottom:14px;">
+          <div class="form-group" style="flex:0 0 auto;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;padding-bottom:9px;">
+              <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleCostTracked" ${f.costTracked ? 'checked' : ''}>
+              Cost
+            </label>
+          </div>
+          <div class="form-group">
+            <input class="form-input mono" type="number" step="0.01" min="0" data-bind="notesForm.cost" value="${escapeHtml(f.cost)}" placeholder="0.00" ${f.costTracked ? '' : 'disabled'}>
+          </div>
+        </div>
+        <button class="btn-submit" data-act="submitNotes" data-id="${escapeHtml(sel.assetTag)}">Save Notes</button>
+      </div>
+    `;
+  }
+
   function renderDrawer(sel) {
     return `
       <div class="overlay" data-act="closeDetail"></div>
@@ -1845,6 +1844,7 @@
           </div>
         `).join('')}
         ${renderAssignmentEditBlock(sel)}
+        ${renderNotesEditBlock(sel)}
         ${sel.isMobile ? renderSimAssignBlock(sel) : ''}
         <div class="drawer-section-title">History</div>
         ${sel.history.map((h) => `

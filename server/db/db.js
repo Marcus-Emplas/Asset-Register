@@ -21,5 +21,11 @@ if (!assetColumns.includes('ip_address')) {
 if (!assetColumns.includes('company')) {
   db.exec("ALTER TABLE assets ADD COLUMN company TEXT DEFAULT ''");
 }
+if (!assetColumns.includes('cost_tracked')) {
+  db.exec('ALTER TABLE assets ADD COLUMN cost_tracked INTEGER NOT NULL DEFAULT 0');
+}
+if (!assetColumns.includes('cost')) {
+  db.exec('ALTER TABLE assets ADD COLUMN cost REAL DEFAULT NULL');
+}
 
 module.exports = db;

@@ -22,6 +22,8 @@ function rowToAsset(row, historyRows) {
     returnDate: row.return_date,
     dateRetired: row.date_retired,
     notes: row.notes,
+    costTracked: !!row.cost_tracked,
+    cost: row.cost,
     agreementSigned: !!row.agreement_signed,
     supplier: row.supplier,
     status: row.status,

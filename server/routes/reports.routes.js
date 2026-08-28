@@ -8,7 +8,7 @@ const VALID_FIELDS = new Set([
   'assetTag', 'itemType', 'model', 'serialNumber', 'expressTag', 'macAddress', 'ipAddress',
   'imei', 'wsusGroup', 'telephoneNumber', 'poNumber', 'deviceBlocked', 'location', 'company',
   'firstName', 'lastName', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired',
-  'notes', 'agreementSigned', 'supplier', 'status',
+  'notes', 'agreementSigned', 'supplier', 'status', 'costTracked', 'cost',
 ]);
 
 function rowToReport(row) {

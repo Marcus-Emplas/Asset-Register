@@ -259,6 +259,24 @@ router.patch('/:id', (req, res) => {
     updates.agreement_signed = body.agreementSigned ? 1 : 0;
   }
 
+  if (body.notes !== undefined) {
+    updates.notes = (body.notes || '').trim();
+  }
+
+  if (body.costTracked !== undefined || body.cost !== undefined) {
+    const costTracked = body.costTracked !== undefined ? !!body.costTracked : existing.costTracked;
+    let cost = null;
+    if (costTracked) {
+      const parsed = parseFloat(body.cost);
+      cost = Number.isFinite(parsed) ? parsed : null;
+    }
+    if (costTracked !== existing.costTracked || cost !== existing.cost) {
+      historyLines.push(costTracked && cost !== null ? `Cost recorded: £${cost.toFixed(2)}` : (costTracked ? 'Cost tracking enabled' : 'Cost tracking cleared'));
+    }
+    updates.cost_tracked = costTracked ? 1 : 0;
+    updates.cost = cost;
+  }
+
   if (Object.keys(updates).length > 0) {
     const setClauses = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
     db.prepare(`UPDATE assets SET ${setClauses}, updated_at = datetime('now') WHERE asset_tag = @assetTag`)

@@ -356,12 +356,13 @@ button, input, select { font-family: inherit; }
 .form-row { display: flex; gap: 12px; margin-bottom: 12px; }
 .form-row .form-group { flex: 1; margin-bottom: 0; }
 .form-label { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
-.form-input, .form-select {
+.form-input, .form-select, textarea.form-input {
   width: 100%; box-sizing: border-box; background: var(--bg-field);
   border: 1px solid var(--border-strong); border-radius: 8px; padding: 9px 12px;
   color: var(--text); font-size: 13px;
 }
 .form-input.mono { font-family: var(--mono); }
+textarea.form-input { font-family: var(--sans); resize: vertical; min-height: 70px; }
 .form-error { color: var(--red); font-size: 11px; margin-top: 4px; }
 
 .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
