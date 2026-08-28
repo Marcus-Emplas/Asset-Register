@@ -56,12 +56,12 @@ router.post('/', requireRole('admin'), (req, res) => {
 
   db.prepare(`
     INSERT INTO assets (
-      asset_tag, item_type, model, serial_number, express_tag, mac_address, imei,
+      asset_tag, item_type, model, serial_number, express_tag, mac_address, ip_address, imei,
       wsus_group, telephone_number, po_number, device_blocked, location,
       first_name, last_name, date_acquired, date_deployed, return_date, date_retired,
       notes, agreement_signed, supplier, status
     ) VALUES (
-      @assetTag, @itemType, @model, @serialNumber, '', '', '',
+      @assetTag, @itemType, @model, @serialNumber, '', '', @ipAddress, '',
       '', '', @poNumber, 0, @location,
       @firstName, @lastName, @dateAcquired, @dateDeployed, '', '',
       '', 0, @supplier, @status
@@ -69,6 +69,7 @@ router.post('/', requireRole('admin'), (req, res) => {
   `).run({
     assetTag, itemType, model,
     serialNumber: (body.serialNumber || '').trim() || '—',
+    ipAddress: (body.ipAddress || '').trim(),
     poNumber: (body.poNumber || '').trim() || '—',
     location: body.location || 'London HQ',
     firstName, lastName,
@@ -157,12 +158,12 @@ router.post('/import', requireRole('admin'), (req, res) => {
 
       db.prepare(`
         INSERT INTO assets (
-          asset_tag, item_type, model, serial_number, express_tag, mac_address, imei,
+          asset_tag, item_type, model, serial_number, express_tag, mac_address, ip_address, imei,
           wsus_group, telephone_number, po_number, device_blocked, location,
           first_name, last_name, date_acquired, date_deployed, return_date, date_retired,
           notes, agreement_signed, supplier, status
         ) VALUES (
-          @assetTag, @itemType, @model, @serialNumber, '', '', '',
+          @assetTag, @itemType, @model, @serialNumber, '', '', @ipAddress, '',
           '', '', @poNumber, @deviceBlocked, @location,
           @firstName, @lastName, @dateAcquired, @dateDeployed, @returnDate, @dateRetired,
           '', @agreementSigned, @supplier, @status
@@ -170,6 +171,7 @@ router.post('/import', requireRole('admin'), (req, res) => {
       `).run({
         assetTag, itemType, model,
         serialNumber: (row.serialNumber || '').trim() || '—',
+        ipAddress: (row.ipAddress || '').trim(),
         poNumber: (row.poNumber || '').trim() || '—',
         location: row.location || 'London HQ',
         firstName, lastName,

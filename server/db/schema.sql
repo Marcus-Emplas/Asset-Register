@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS assets (
   serial_number    TEXT DEFAULT '',
   express_tag      TEXT DEFAULT '',
   mac_address      TEXT DEFAULT '',
+  ip_address       TEXT DEFAULT '',
   imei             TEXT DEFAULT '',
   wsus_group       TEXT DEFAULT '',
   telephone_number TEXT DEFAULT '',
@@ -45,6 +46,21 @@ CREATE TABLE IF NOT EXISTS asset_history (
 );
 CREATE INDEX IF NOT EXISTS idx_asset_history_tag ON asset_history(asset_tag);
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+
+CREATE TABLE IF NOT EXISTS sim_cards (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone_number       TEXT NOT NULL UNIQUE,
+  carrier            TEXT DEFAULT '',
+  plan               TEXT DEFAULT '',
+  iccid              TEXT DEFAULT '',
+  status             TEXT NOT NULL CHECK (status IN ('Available','Assigned','Retired')) DEFAULT 'Available',
+  assigned_asset_tag TEXT REFERENCES assets(asset_tag) ON DELETE SET NULL,
+  notes              TEXT DEFAULT '',
+  created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_sim_cards_status ON sim_cards(status);
+CREATE INDEX IF NOT EXISTS idx_sim_cards_asset ON sim_cards(assigned_asset_tag);
 
 CREATE TABLE IF NOT EXISTS password_resets (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

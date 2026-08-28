@@ -7,6 +7,7 @@ function rowToAsset(row, historyRows) {
     serialNumber: row.serial_number,
     expressTag: row.express_tag,
     macAddress: row.mac_address,
+    ipAddress: row.ip_address,
     imei: row.imei,
     wsusGroup: row.wsus_group,
     telephoneNumber: row.telephone_number,

@@ -33,6 +33,7 @@
         csvImport: { open: false, step: 'pick', fileName: '', rows: [] },
         users: [], userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
         accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
+        simCards: [], simForm: freshSimForm(), simFormErrors: {},
       };
       this._toastTimer = null;
     }
@@ -46,6 +47,7 @@
         const me = await Api.get('/api/me');
         this.setState({ currentUser: me });
         await this.loadAssets();
+        await this.loadSimCards();
       } catch (e) {
         this.setState({ currentUser: null, ready: false });
       }
@@ -54,6 +56,13 @@
     async loadAssets() {
       const assets = await Api.get('/api/assets');
       this.setState({ assets, ready: true });
+    }
+
+    async loadSimCards() {
+      try {
+        const simCards = await Api.get('/api/simcards');
+        this.setState({ simCards });
+      } catch (e) { /* non-fatal — sim assignment UI just shows empty */ }
     }
 
     setState(patch) {
@@ -264,6 +273,9 @@
         const created = await Api.post('/api/assets', form);
         this.setState((s) => ({ assets: [created, ...s.assets], addOpen: false, page: 1, form: freshForm(), formErrors: {} }));
         this.showToast(`Asset ${created.assetTag} added`);
+        if (form.itemType === 'Mobile Phone' && form.simCardId) {
+          await this.assignSim(form.simCardId, created.assetTag);
+        }
       } catch (e) {
         if (e.status === 400 && e.data && e.data.fields) this.setState({ formErrors: e.data.fields });
         else this.showToast('Failed to add asset');
@@ -345,6 +357,78 @@
         this.showToast(`MFA reset for ${updated.email}`);
       } catch (e) {
         this.showToast('Failed to reset MFA');
+      }
+    }
+
+    async goSimCards() {
+      this.setState({ screen: 'simcards', drawerOpen: false });
+      await this.loadSimCards();
+    }
+
+    updateSimField(field, value) { this.setState((s) => ({ simForm: { ...s.simForm, [field]: value } })); }
+
+    async submitCreateSim() {
+      const form = this.state.simForm;
+      const errors = {};
+      if (!form.phoneNumber.trim()) errors.phoneNumber = 'Phone number is required';
+      if (Object.keys(errors).length) { this.setState({ simFormErrors: errors }); return; }
+      try {
+        const created = await Api.post('/api/simcards', form);
+        this.setState((s) => ({
+          simCards: [...s.simCards, created].sort((a, b) => (a.phoneNumber < b.phoneNumber ? -1 : 1)),
+          simForm: freshSimForm(), simFormErrors: {},
+        }));
+        this.showToast(`SIM ${created.phoneNumber} added`);
+      } catch (e) {
+        if (e.status === 400 && e.data && e.data.fields) this.setState({ simFormErrors: e.data.fields });
+        else this.showToast('Failed to add SIM');
+      }
+    }
+
+    applySimAndAssetUpdate({ simCard, asset }) {
+      this.setState((s) => ({
+        simCards: s.simCards.map((sc) => (sc.id === simCard.id ? simCard : sc)),
+        assets: asset ? s.assets.map((a) => (a.id === asset.id ? asset : a)) : s.assets,
+      }));
+    }
+
+    async assignSim(simId, assetTag) {
+      try {
+        const result = await Api.post(`/api/simcards/${simId}/assign`, { assetTag });
+        this.applySimAndAssetUpdate(result);
+        this.showToast(`SIM ${result.simCard.phoneNumber} assigned to ${assetTag}`);
+      } catch (e) {
+        this.showToast('Failed to assign SIM');
+      }
+    }
+
+    async unassignSim(simId) {
+      try {
+        const result = await Api.post(`/api/simcards/${simId}/unassign`);
+        this.applySimAndAssetUpdate(result);
+        this.showToast(`SIM ${result.simCard.phoneNumber} unassigned`);
+      } catch (e) {
+        this.showToast('Failed to unassign SIM');
+      }
+    }
+
+    async retireSim(simId) {
+      try {
+        const updated = await Api.post(`/api/simcards/${simId}/retire`);
+        this.setState((s) => ({ simCards: s.simCards.map((sc) => (sc.id === updated.id ? updated : sc)) }));
+        this.showToast(`SIM ${updated.phoneNumber} retired`);
+      } catch (e) {
+        this.showToast(e.data && e.data.error === 'sim_assigned' ? 'Unassign the SIM before retiring it' : 'Failed to retire SIM');
+      }
+    }
+
+    async reactivateSim(simId) {
+      try {
+        const updated = await Api.post(`/api/simcards/${simId}/reactivate`);
+        this.setState((s) => ({ simCards: s.simCards.map((sc) => (sc.id === updated.id ? updated : sc)) }));
+        this.showToast(`SIM ${updated.phoneNumber} reactivated`);
+      } catch (e) {
+        this.showToast('Failed to reactivate SIM');
       }
     }
 
@@ -517,7 +601,7 @@
       const rows = pageRows.map((asset) => ({
         id: asset.id, assetTag: asset.assetTag, itemType: asset.itemType, model: asset.model,
         assigneeName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '—',
-        location: asset.location, status: asset.status,
+        location: asset.location, ipAddress: asset.ipAddress, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
         deployedStr: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—',
         selected: st.selectedIds.includes(asset.id),
@@ -613,6 +697,9 @@
         csvImport: st.csvImport,
         users: st.users, userForm: st.userForm, userFormErrors: st.userFormErrors,
         accountForm: st.accountForm, accountFormErrors: st.accountFormErrors,
+        simCards: st.simCards, simForm: st.simForm, simFormErrors: st.simFormErrors,
+        assignableMobiles: all.filter((a) => a.itemType === 'Mobile Phone' && a.status !== 'Retired'),
+        availableSims: st.simCards.filter((sc) => sc.status === 'Available'),
       };
     }
 
@@ -626,7 +713,9 @@
           { label: 'Serial Number', value: asset.serialNumber }, { label: 'Express Tag', value: asset.expressTag || '—' },
         ] },
         { title: 'Network', fields: [
-          { label: 'MAC Address', value: asset.macAddress || '—' }, { label: 'IMEI', value: asset.imei || '—' },
+          { label: 'MAC Address', value: asset.macAddress || '—' },
+          { label: 'IP Address', value: asset.ipAddress || '—', link: asset.ipAddress ? `http://${encodeURIComponent(asset.ipAddress)}` : null },
+          { label: 'IMEI', value: asset.imei || '—' },
           { label: 'Telephone', value: asset.telephoneNumber || '—' }, { label: 'WSUS Group', value: asset.wsusGroup || '—' },
         ] },
         { title: 'Assignment', fields: [
@@ -651,11 +740,15 @@
         actions.push({ act: 'checkInOut', label: 'Mark Repaired', color: '#34E2A0', border: '#34E2A0' });
         if (isAdmin) actions.push({ act: 'retireAsset', label: 'Retire Asset', color: '#F2635B', border: '#F2635B' });
       }
+      const isMobile = asset.itemType === 'Mobile Phone';
+      const currentSim = isMobile ? this.state.simCards.find((sc) => sc.assignedAssetTag === asset.assetTag) || null : null;
+      const availableSims = isMobile ? this.state.simCards.filter((sc) => sc.status === 'Available') : [];
       return {
         id: asset.id, assetTag: asset.assetTag, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
         sections, history: [...asset.history].reverse().map((h) => ({ date: formatDate(h.date), text: h.text })),
         actions, isRetired: asset.status === 'Retired',
+        isMobile, currentSim, availableSims,
       };
     }
 
@@ -750,6 +843,11 @@
           case 'submitCreateUser': this.submitCreateUser(); break;
           case 'toggleUserActive': this.toggleUserActive(id); break;
           case 'resetUserMfa': this.resetUserMfa(id); break;
+          case 'goSimCards': this.goSimCards(); break;
+          case 'submitCreateSim': this.submitCreateSim(); break;
+          case 'unassignSim': this.unassignSim(id); break;
+          case 'retireSim': this.retireSim(id); break;
+          case 'reactivateSim': this.reactivateSim(id); break;
           case 'goAccount': this.goAccount(); break;
           case 'submitChangePassword': this.submitChangePassword(); break;
           case 'resetOwnMfa': this.resetOwnMfa(); break;
@@ -771,6 +869,7 @@
         else if (bind.startsWith('resetForm.')) this.updateResetField(bind.slice(10), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
         else if (bind.startsWith('accountForm.')) this.updateAccountField(bind.slice(12), el.value);
+        else if (bind.startsWith('simForm.')) this.updateSimField(bind.slice(8), el.value);
       };
 
       root.onchange = (e) => {
@@ -782,6 +881,9 @@
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
         else if (bind.startsWith('userRole.')) this.changeUserRole(bind.slice(9), el.value);
+        else if (bind.startsWith('simForm.')) this.updateSimField(bind.slice(8), el.value);
+        else if (bind.startsWith('assignSimRow.')) { if (el.value) this.assignSim(bind.slice(13), el.value); }
+        else if (bind.startsWith('assignSim.')) { if (el.value) this.assignSim(el.value, bind.slice(10)); }
       };
     }
   }
@@ -906,11 +1008,12 @@
             ${vm.screen === 'assets' ? renderAssets(vm) : ''}
             ${vm.screen === 'reports' ? renderReports(vm) : ''}
             ${vm.screen === 'deprecated' ? renderDeprecated(vm) : ''}
+            ${vm.screen === 'simcards' ? renderSimCards(vm) : ''}
             ${vm.screen === 'users' ? renderUsers(vm) : ''}
             ${vm.screen === 'account' ? renderAccount(vm) : ''}
           </div>
           ${vm.drawerOpen && vm.selected ? renderDrawer(vm.selected) : ''}
-          ${vm.addOpen ? renderAddModal(vm.form, vm.formErrors) : ''}
+          ${vm.addOpen ? renderAddModal(vm.form, vm.formErrors, vm.availableSims) : ''}
           ${vm.csvImport.open ? renderImportModal(vm.csvImport) : ''}
         </div>
       </div>
@@ -945,6 +1048,7 @@
         ${item('assets', 'Assets', 'goAssets')}
         ${item('reports', 'Reports', 'goReports')}
         ${item('deprecated', 'Deprecated', 'goDeprecated')}
+        ${item('simcards', 'SIM Cards', 'goSimCards')}
         ${vm.isAdmin ? item('users', 'Users', 'goUsers') : ''}
         <div class="spacer"></div>
         <div class="nav-footer">v2.4 · ${vm.donutTotal} assets</div>
@@ -1116,6 +1220,7 @@
             <div>MODEL</div>
             <div>ASSIGNED TO</div>
             <div>LOCATION</div>
+            <div>IP ADDRESS</div>
             <div class="sortable" data-act="sortStatus">STATUS ${arrow('status')}</div>
             <div class="sortable" data-act="sortDeployed">DEPLOYED ${arrow('dateDeployed')}</div>
           </div>
@@ -1128,6 +1233,7 @@
                 <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(row.model)}</div>
                 <div class="cell-dim cell-ellipsis">${escapeHtml(row.assigneeName)}</div>
                 <div class="cell-dim cell-ellipsis">${escapeHtml(row.location)}</div>
+                <div class="cell-mono cell-ellipsis">${row.ipAddress ? `<a class="ip-link" href="http://${encodeURIComponent(row.ipAddress)}" target="_blank" rel="noopener noreferrer" data-act="noop">${escapeHtml(row.ipAddress)}</a>` : '<span class="cell-dim">—</span>'}</div>
                 <div><span class="status-pill" style="background:${row.statusBg};color:${row.statusColor};">${escapeHtml(row.status)}</span></div>
                 <div class="cell-deployed">${escapeHtml(row.deployedStr)}</div>
               </div>
@@ -1239,6 +1345,32 @@
     `;
   }
 
+  function renderSimAssignBlock(sel) {
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">SIM Card</div>
+        ${sel.currentSim ? `
+          <div class="drawer-field-row">
+            <div class="drawer-field-label">Assigned</div>
+            <div class="drawer-field-value">${escapeHtml(sel.currentSim.phoneNumber)}${sel.currentSim.carrier ? ' — ' + escapeHtml(sel.currentSim.carrier) : ''}</div>
+          </div>
+          ${!sel.isRetired ? `<button class="btn-ghost" data-act="unassignSim" data-id="${sel.currentSim.id}">Unassign SIM</button>` : ''}
+        ` : sel.isRetired ? `
+          <div class="drawer-field-row">
+            <div class="drawer-field-label">Assigned</div>
+            <div class="drawer-field-value">—</div>
+          </div>
+        ` : `
+          <select class="form-select" data-bind="assignSim.${escapeHtml(sel.assetTag)}">
+            <option value="">Assign a SIM card…</option>
+            ${sel.availableSims.map((sc) => `<option value="${sc.id}">${escapeHtml(sc.phoneNumber)}${sc.carrier ? ' — ' + escapeHtml(sc.carrier) : ''}</option>`).join('')}
+          </select>
+          ${sel.availableSims.length === 0 ? `<div class="account-hint">No unassigned SIM cards available.</div>` : ''}
+        `}
+      </div>
+    `;
+  }
+
   function renderDrawer(sel) {
     return `
       <div class="overlay" data-act="closeDetail"></div>
@@ -1256,11 +1388,12 @@
             ${sec.fields.map((f) => `
               <div class="drawer-field-row">
                 <div class="drawer-field-label">${escapeHtml(f.label)}</div>
-                <div class="drawer-field-value">${escapeHtml(f.value)}</div>
+                <div class="drawer-field-value">${f.link ? `<a class="ip-link" href="${escapeHtml(f.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(f.value)}</a>` : escapeHtml(f.value)}</div>
               </div>
             `).join('')}
           </div>
         `).join('')}
+        ${sel.isMobile ? renderSimAssignBlock(sel) : ''}
         <div class="drawer-section-title">History</div>
         ${sel.history.map((h) => `
           <div class="history-row">
@@ -1277,7 +1410,7 @@
     `;
   }
 
-  function renderAddModal(form, errors) {
+  function renderAddModal(form, errors, availableSims) {
     const opts = (arr, current) => arr.map((v) => `<option value="${escapeHtml(v)}" ${v === current ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
     return `
       <div class="modal-overlay" data-act="closeAdd">
@@ -1318,6 +1451,22 @@
 
           <div class="form-row">
             <div class="form-group">
+              <div class="form-label">IP Address</div>
+              <input class="form-input mono" type="text" data-bind="form.ipAddress" value="${escapeHtml(form.ipAddress)}" placeholder="192.168.1.50">
+            </div>
+            <div class="form-group">
+              ${form.itemType === 'Mobile Phone' ? `
+                <div class="form-label">SIM Card</div>
+                <select class="form-select" data-bind="form.simCardId">
+                  <option value="">No SIM — assign later</option>
+                  ${availableSims.map((sc) => `<option value="${sc.id}" ${String(sc.id) === String(form.simCardId) ? 'selected' : ''}>${escapeHtml(sc.phoneNumber)}${sc.carrier ? ' — ' + escapeHtml(sc.carrier) : ''}</option>`).join('')}
+                </select>
+              ` : ''}
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
               <div class="form-label">Assignee First Name</div>
               <input class="form-input" type="text" data-bind="form.firstName" value="${escapeHtml(form.firstName)}">
             </div>
@@ -1343,6 +1492,71 @@
             <button class="btn-submit" data-act="submitAdd">Add Asset</button>
           </div>
         </div>
+      </div>
+    `;
+  }
+
+  function renderSimCards(vm) {
+    const simCols = '140px 110px 140px 1fr 110px 1.6fr';
+    return `
+      <div class="screen-scroll">
+        <div class="page-title">SIM Cards</div>
+        <div class="panel">
+          <div class="panel-title">SIM Inventory</div>
+          <div class="users-row users-header" style="grid-template-columns:${simCols};">
+            <div>NUMBER</div><div>CARRIER</div><div>PLAN</div><div>ASSIGNED TO</div><div>STATUS</div><div></div>
+          </div>
+          ${vm.simCards.map((sc) => {
+            const assignedAsset = sc.assignedAssetTag ? vm.assignableMobiles.find((a) => a.assetTag === sc.assignedAssetTag) : null;
+            const assignedLabel = sc.assignedAssetTag ? `${sc.assignedAssetTag}${assignedAsset && assignedAsset.firstName ? ' — ' + assignedAsset.firstName + ' ' + assignedAsset.lastName : ''}` : '—';
+            return `
+            <div class="users-row" style="grid-template-columns:${simCols};">
+              <div class="cell-mono" style="color:#E8EDF3;">${escapeHtml(sc.phoneNumber)}</div>
+              <div class="cell-dim">${escapeHtml(sc.carrier || '—')}</div>
+              <div class="cell-dim cell-ellipsis">${escapeHtml(sc.plan || '—')}</div>
+              <div class="cell-dim cell-ellipsis">${escapeHtml(assignedLabel)}</div>
+              <div><span class="status-pill" style="background:${tint(SIM_STATUS_COLORS[sc.status])};color:${SIM_STATUS_COLORS[sc.status]};">${escapeHtml(sc.status)}</span></div>
+              <div class="users-row-actions">
+                ${sc.status === 'Available' ? `
+                  <select class="form-select" style="padding:5px 8px;font-size:12px;max-width:180px;" data-bind="assignSimRow.${sc.id}">
+                    <option value="">Assign to…</option>
+                    ${vm.assignableMobiles.map((a) => `<option value="${escapeHtml(a.assetTag)}">${escapeHtml(a.assetTag)} — ${escapeHtml(a.model)}</option>`).join('')}
+                  </select>
+                  ${vm.isAdmin ? `<button class="btn-ghost users-row-btn" data-act="retireSim" data-id="${sc.id}">Retire</button>` : ''}
+                ` : ''}
+                ${sc.status === 'Assigned' ? `<button class="btn-ghost users-row-btn" data-act="unassignSim" data-id="${sc.id}">Unassign</button>` : ''}
+                ${sc.status === 'Retired' && vm.isAdmin ? `<button class="btn-ghost users-row-btn" data-act="reactivateSim" data-id="${sc.id}">Reactivate</button>` : ''}
+              </div>
+            </div>
+          `; }).join('')}
+          ${vm.simCards.length === 0 ? `<div class="users-row"><div class="cell-dim">No SIM cards yet.</div></div>` : ''}
+        </div>
+
+        ${vm.isAdmin ? `
+        <div class="panel" style="max-width:480px;">
+          <div class="panel-title">Add SIM Card</div>
+          <div class="form-group">
+            <div class="form-label">Phone Number</div>
+            <input class="form-input mono" type="text" data-bind="simForm.phoneNumber" value="${escapeHtml(vm.simForm.phoneNumber)}" placeholder="+44 7700 900123">
+            ${vm.simFormErrors.phoneNumber ? `<div class="form-error">${escapeHtml(vm.simFormErrors.phoneNumber)}</div>` : ''}
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <div class="form-label">Carrier</div>
+              <input class="form-input" type="text" data-bind="simForm.carrier" value="${escapeHtml(vm.simForm.carrier)}" placeholder="EE">
+            </div>
+            <div class="form-group">
+              <div class="form-label">Plan</div>
+              <input class="form-input" type="text" data-bind="simForm.plan" value="${escapeHtml(vm.simForm.plan)}" placeholder="20GB Data">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:18px;">
+            <div class="form-label">ICCID</div>
+            <input class="form-input mono" type="text" data-bind="simForm.iccid" value="${escapeHtml(vm.simForm.iccid)}">
+          </div>
+          <button class="btn-submit" data-act="submitCreateSim">Add SIM Card</button>
+        </div>
+        ` : ''}
       </div>
     `;
   }
@@ -1419,7 +1633,7 @@
               <div class="form-label">CSV file</div>
               <input class="form-input" type="file" id="csvFileInput" accept=".csv">
             </div>
-            <div class="auth-hint">Expects the same columns as the Export CSV format (assetTag, itemType, model, serialNumber, status, location, firstName, lastName, supplier, poNumber, dateAcquired, dateDeployed, returnDate, dateRetired, deviceBlocked, agreementSigned).</div>
+            <div class="auth-hint">Expects the same columns as the Export CSV format (assetTag, itemType, model, serialNumber, ipAddress, status, location, firstName, lastName, supplier, poNumber, dateAcquired, dateDeployed, returnDate, dateRetired, deviceBlocked, agreementSigned).</div>
             <div class="modal-actions">
               <button class="btn-secondary" data-act="closeImport">Cancel</button>
             </div>

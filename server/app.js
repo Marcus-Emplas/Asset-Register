@@ -9,6 +9,7 @@ const { attachCurrentUser, requireAuth } = require('./middleware/auth');
 const authRoutes = require('./routes/auth.routes');
 const assetsRoutes = require('./routes/assets.routes');
 const usersRoutes = require('./routes/users.routes');
+const simcardsRoutes = require('./routes/simcards.routes');
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 
 app.use('/api/assets', requireAuth, assetsRoutes);
 app.use('/api/users', requireAuth, usersRoutes);
+app.use('/api/simcards', requireAuth, simcardsRoutes);
 
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'not_found' });

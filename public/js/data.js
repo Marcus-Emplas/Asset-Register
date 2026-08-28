@@ -5,6 +5,7 @@ const STATUSES = ['In Use', 'In Stock', 'In Repair', 'Retired'];
 const TODAY_ISO = new Date().toISOString().slice(0, 10);
 const TODAY = new Date(TODAY_ISO + 'T00:00:00');
 const STATUS_COLORS = { 'In Use': '#34E2A0', 'In Stock': '#4FA3F7', 'In Repair': '#F2B84B', 'Retired': '#8792A2' };
+const SIM_STATUS_COLORS = { 'Available': '#4FA3F7', 'Assigned': '#34E2A0', 'Retired': '#8792A2' };
 const STATUS_ORDER = ['In Use', 'In Stock', 'In Repair', 'Retired'];
 const PAGE_SIZE = 25;
 
@@ -135,7 +136,7 @@ function attentionList(assets, limit) {
   return out;
 }
 function buildCsv(rows) {
-  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'status', 'location', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
+  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
   const header = cols.join(',');
   const lines = rows.map((r) => cols.map((c) => {
     let v = r[c];
@@ -182,5 +183,8 @@ function parseCsv(text) {
     });
 }
 function freshForm() {
-  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', location: 'London HQ', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '' };
+  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'London HQ', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
+}
+function freshSimForm() {
+  return { phoneNumber: '', carrier: '', plan: '', iccid: '' };
 }

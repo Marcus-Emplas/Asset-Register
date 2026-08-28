@@ -234,7 +234,7 @@ button, input, select { font-family: inherit; }
 
 .table-header {
   flex-shrink: 0; display: grid;
-  grid-template-columns: 32px 118px 96px 1fr 140px 128px 108px 96px;
+  grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 108px 96px;
   gap: 12px; padding: 9px 20px; border-bottom: 1px solid var(--border);
   font-size: 11px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.04em;
 }
@@ -256,6 +256,9 @@ button, input, select { font-family: inherit; }
 .cell-deployed { font-family: var(--mono); color: var(--text-faint); font-size: 11.5px; }
 .cell-check { display: flex; align-items: center; justify-content: center; }
 .cell-check input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; width: 15px; height: 15px; }
+
+.ip-link { color: var(--accent); text-decoration: none; }
+.ip-link:hover { text-decoration: underline; }
 
 .bulk-toolbar {
   flex-shrink: 0; display: flex; align-items: center; gap: 10px;

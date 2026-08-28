@@ -14,4 +14,9 @@ db.exec('PRAGMA foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+const assetColumns = db.prepare('PRAGMA table_info(assets)').all().map((c) => c.name);
+if (!assetColumns.includes('ip_address')) {
+  db.exec("ALTER TABLE assets ADD COLUMN ip_address TEXT DEFAULT ''");
+}
+
 module.exports = db;
