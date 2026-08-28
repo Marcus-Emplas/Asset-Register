@@ -139,4 +139,14 @@ router.post('/:id/reactivate', requireRole('admin'), (req, res) => {
   res.json(fetchOneSim(simId));
 });
 
+router.delete('/:id', requireRole('admin'), (req, res) => {
+  const simId = Number(req.params.id);
+  const sim = fetchOneSim(simId);
+  if (!sim) return res.status(404).json({ error: 'not_found' });
+  if (sim.assignedAssetTag) return res.status(400).json({ error: 'sim_assigned' });
+
+  db.prepare('DELETE FROM sim_cards WHERE id = ?').run(simId);
+  res.json({ status: 'ok' });
+});
+
 module.exports = router;

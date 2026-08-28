@@ -48,6 +48,14 @@ CREATE TABLE IF NOT EXISTS asset_history (
 CREATE INDEX IF NOT EXISTS idx_asset_history_tag ON asset_history(asset_tag);
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
 
+CREATE TABLE IF NOT EXISTS custom_reports (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL UNIQUE,
+  fields     TEXT NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS sim_cards (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   phone_number       TEXT NOT NULL UNIQUE,

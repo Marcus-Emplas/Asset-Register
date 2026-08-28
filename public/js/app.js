@@ -34,6 +34,10 @@
     { value: 'notes', label: 'Notes' },
   ];
   function isEmptyValue(v) { return !v || v === '—'; }
+  function fieldLabel(value) {
+    const opt = ASSET_FIELD_OPTIONS.find((f) => f.value === value);
+    return opt ? opt.label : value;
+  }
 
   class App {
     constructor() {
@@ -44,6 +48,9 @@
         addOpen: false, form: freshForm(), formErrors: {},
         assignForm: { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
         reportBuilder: { type: 'groupBy', field: 'itemType' },
+        customReports: [],
+        newReportOpen: false, newReportForm: { name: '', fields: [] }, newReportErrors: {},
+        exportPickerOpen: false,
         currentUser: null,
         authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authInfo: '', authSubmitting: false,
         mfaForm: { token: '' }, mfaError: '',
@@ -71,6 +78,7 @@
         this.setState({ currentUser: me });
         await this.loadAssets();
         await this.loadSimCards();
+        await this.loadCustomReports();
       } catch (e) {
         this.setState({ currentUser: null, ready: false });
       }
@@ -86,6 +94,13 @@
         const simCards = await Api.get('/api/simcards');
         this.setState({ simCards });
       } catch (e) { /* non-fatal — sim assignment UI just shows empty */ }
+    }
+
+    async loadCustomReports() {
+      try {
+        const customReports = await Api.get('/api/reports');
+        this.setState({ customReports });
+      } catch (e) { /* non-fatal — custom report picker just shows empty */ }
     }
 
     setState(patch) {
@@ -368,28 +383,77 @@
 
     setDeprecatedPage(page) { this.setState({ deprecatedPage: page }); }
 
-    setReportType(type) {
-      const fieldOptions = type === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
-      this.setState({ reportBuilder: { type, field: fieldOptions[0].value } });
+    setReportTypeValue(value) {
+      if (value.startsWith('custom:')) {
+        this.setState({ reportBuilder: { type: 'custom', customReportId: Number(value.slice(7)) } });
+      } else {
+        const fieldOptions = value === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
+        this.setState({ reportBuilder: { type: value, field: fieldOptions[0].value } });
+      }
     }
     setReportField(field) { this.setState((s) => ({ reportBuilder: { ...s.reportBuilder, field } })); }
 
-    exportCustomReport() {
-      const vm = this.computeViewModel();
-      const fieldLabel = vm.reportFieldOptions.find((f) => f.value === vm.reportBuilder.field).label;
-      let csv;
-      if (vm.reportBuilder.type === 'groupBy') {
-        csv = ['field,count', ...vm.reportGroups.map((g) => `"${g.label.replace(/"/g, '""')}",${g.count}`)].join('\n');
-      } else {
-        csv = buildCsv(vm.reportRows);
+    openNewReport() { this.setState({ newReportOpen: true, newReportForm: { name: '', fields: [] }, newReportErrors: {} }); }
+    closeNewReport() { this.setState({ newReportOpen: false }); }
+
+    toggleReportField(field) {
+      this.setState((s) => {
+        const has = s.newReportForm.fields.includes(field);
+        return { newReportForm: { ...s.newReportForm, fields: has ? s.newReportForm.fields.filter((f) => f !== field) : [...s.newReportForm.fields, field] } };
+      });
+    }
+
+    async submitNewReport() {
+      const form = this.state.newReportForm;
+      const errors = {};
+      if (!form.name.trim()) errors.name = 'Report name is required';
+      if (!form.fields.length) errors.fields = 'Select at least one field';
+      if (Object.keys(errors).length) { this.setState({ newReportErrors: errors }); return; }
+      try {
+        const created = await Api.post('/api/reports', { name: form.name.trim(), fields: form.fields });
+        this.setState((s) => ({
+          customReports: [...s.customReports, created].sort((a, b) => (a.name < b.name ? -1 : 1)),
+          newReportOpen: false, newReportForm: { name: '', fields: [] }, newReportErrors: {},
+          reportBuilder: { type: 'custom', customReportId: created.id },
+        }));
+        this.showToast(`Report "${created.name}" saved`);
+      } catch (e) {
+        if (e.status === 400 && e.data && e.data.fields) this.setState({ newReportErrors: e.data.fields });
+        else this.showToast('Failed to save report');
       }
+    }
+
+    async deleteCustomReport(id) {
+      const report = this.state.customReports.find((r) => r.id === Number(id));
+      if (!report) return;
+      if (!window.confirm(`Delete report "${report.name}"? This cannot be undone.`)) return;
+      try {
+        await Api.delete(`/api/reports/${id}`);
+        this.setState((s) => ({
+          customReports: s.customReports.filter((r) => r.id !== Number(id)),
+          reportBuilder: s.reportBuilder.type === 'custom' && s.reportBuilder.customReportId === Number(id)
+            ? { type: 'groupBy', field: 'itemType' } : s.reportBuilder,
+        }));
+        this.showToast(`Report "${report.name}" deleted`);
+      } catch (e) {
+        this.showToast('Failed to delete report');
+      }
+    }
+
+    openExportPicker() { this.setState({ exportPickerOpen: true }); }
+    closeExportPicker() { this.setState({ exportPickerOpen: false }); }
+
+    exportNamedCustomReport(report) {
+      const rows = this.getFiltered();
+      const csv = buildCsvForFields(rows, report.fields);
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = url; link.download = `report-${vm.reportBuilder.type}-${fieldLabel.replace(/\s+/g, '-').toLowerCase()}.csv`;
+      link.href = url; link.download = `${report.name.trim().replace(/\s+/g, '-').toLowerCase()}.csv`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-      this.showToast('Report CSV export started');
+      this.setState({ exportPickerOpen: false });
+      this.showToast(`"${report.name}" export started`);
     }
 
     async goUsers() {
@@ -542,6 +606,19 @@
         this.showToast(`SIM ${updated.phoneNumber} reactivated`);
       } catch (e) {
         this.showToast('Failed to reactivate SIM');
+      }
+    }
+
+    async deleteSim(simId) {
+      const sim = this.state.simCards.find((sc) => sc.id === Number(simId));
+      if (!sim) return;
+      if (!window.confirm(`Delete SIM ${sim.phoneNumber}? This cannot be undone.`)) return;
+      try {
+        await Api.delete(`/api/simcards/${simId}`);
+        this.setState((s) => ({ simCards: s.simCards.filter((sc) => sc.id !== Number(simId)) }));
+        this.showToast(`SIM ${sim.phoneNumber} deleted`);
+      } catch (e) {
+        this.showToast(e.data && e.data.error === 'sim_assigned' ? 'Unassign the SIM before deleting it' : 'Failed to delete SIM');
       }
     }
 
@@ -814,12 +891,19 @@
         simCards: st.simCards, simForm: st.simForm, simFormErrors: st.simFormErrors,
         assignableMobiles: all.filter((a) => a.itemType === 'Mobile Phone' && a.status !== 'Retired'),
         availableSims: st.simCards.filter((sc) => sc.status === 'Available'),
+        customReports: st.customReports,
+        newReportOpen: st.newReportOpen, newReportForm: st.newReportForm, newReportErrors: st.newReportErrors,
+        exportPickerOpen: st.exportPickerOpen,
         ...this.computeReportBuilderVm(all),
       };
     }
 
     computeReportBuilderVm(all) {
       const rb = this.state.reportBuilder;
+      if (rb.type === 'custom') {
+        const report = this.state.customReports.find((r) => r.id === rb.customReportId) || null;
+        return { reportBuilder: rb, reportFieldOptions: [], reportGroups: null, reportRows: null, selectedCustomReport: report };
+      }
       const fieldOptions = rb.type === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
       const field = fieldOptions.some((f) => f.value === rb.field) ? rb.field : fieldOptions[0].value;
       let reportGroups = null, reportRows = null;
@@ -828,7 +912,7 @@
       } else {
         reportRows = all.filter((a) => isEmptyValue(a[field]));
       }
-      return { reportBuilder: rb, reportFieldOptions: fieldOptions, reportGroups, reportRows };
+      return { reportBuilder: rb, reportFieldOptions: fieldOptions, reportGroups, reportRows, selectedCustomReport: null };
     }
 
     buildDetail(id) {
@@ -930,7 +1014,19 @@
           case 'goReports': this.setScreen('reports'); break;
           case 'goDeprecated': this.setScreen('deprecated'); break;
           case 'exportDeprecatedCsv': this.exportDeprecatedCsv(); break;
-          case 'exportCustomReport': this.exportCustomReport(); break;
+          case 'openNewReport': this.openNewReport(); break;
+          case 'closeNewReport': this.closeNewReport(); break;
+          case 'submitNewReport': this.submitNewReport(); break;
+          case 'toggleReportField': this.toggleReportField(el.getAttribute('data-field')); break;
+          case 'deleteCustomReport': this.deleteCustomReport(id); break;
+          case 'openExportPicker': this.openExportPicker(); break;
+          case 'closeExportPicker': this.closeExportPicker(); break;
+          case 'exportStandard': this.exportCsv(); this.setState({ exportPickerOpen: false }); break;
+          case 'exportNamedReport': {
+            const report = this.state.customReports.find((r) => r.id === Number(id));
+            if (report) this.exportNamedCustomReport(report);
+            break;
+          }
           case 'prevDeprecatedPage': this.setDeprecatedPage(Math.max(1, this.state.deprecatedPage - 1)); break;
           case 'nextDeprecatedPage': {
             const vm = this.computeViewModel();
@@ -986,6 +1082,7 @@
           case 'unassignSim': this.unassignSim(id); break;
           case 'retireSim': this.retireSim(id); break;
           case 'reactivateSim': this.reactivateSim(id); break;
+          case 'deleteSim': this.deleteSim(id); break;
           case 'goAccount': this.goAccount(); break;
           case 'submitChangePassword': this.submitChangePassword(); break;
           case 'resetOwnMfa': this.resetOwnMfa(); break;
@@ -1017,6 +1114,7 @@
         else if (bind.startsWith('accountForm.')) s.accountForm[bind.slice(12)] = el.value;
         else if (bind.startsWith('simForm.')) s.simForm[bind.slice(8)] = el.value;
         else if (bind.startsWith('assignForm.')) s.assignForm[bind.slice(11)] = el.value;
+        else if (bind.startsWith('newReportForm.')) s.newReportForm[bind.slice(14)] = el.value;
       };
 
       root.onchange = (e) => {
@@ -1025,7 +1123,7 @@
         if (!bind) return;
         if (bind === 'typeFilter') this.setTypeFilter(el.value);
         else if (bind === 'locationFilter') this.setLocationFilter(el.value);
-        else if (bind === 'reportType') this.setReportType(el.value);
+        else if (bind === 'reportType') this.setReportTypeValue(el.value);
         else if (bind === 'reportField') this.setReportField(el.value);
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
@@ -1168,6 +1266,8 @@
           ${vm.drawerOpen && vm.selected ? renderDrawer(vm.selected) : ''}
           ${vm.addOpen ? renderAddModal(vm.form, vm.formErrors, vm.availableSims) : ''}
           ${vm.csvImport.open ? renderImportModal(vm.csvImport) : ''}
+          ${vm.newReportOpen ? renderNewReportModal(vm) : ''}
+          ${vm.exportPickerOpen ? renderExportPickerModal(vm) : ''}
         </div>
       </div>
       ${vm.toast ? `<div class="toast">${escapeHtml(vm.toast.msg)}</div>` : ''}
@@ -1199,7 +1299,7 @@
       <div class="sidebar">
         ${item('overview', 'Overview', 'goOverview')}
         ${item('assets', 'Assets', 'goAssets')}
-        ${item('reports', 'Reports', 'goReports')}
+        ${item('reports', 'Reports & Analytics', 'goReports')}
         ${item('deprecated', 'Deprecated', 'goDeprecated')}
         ${item('simcards', 'SIM Cards', 'goSimCards')}
         ${vm.isAdmin ? item('users', 'Users', 'goUsers') : ''}
@@ -1425,7 +1525,7 @@
         <div class="page-header-row">
           <div class="page-title" style="margin-bottom:0;">Reports &amp; Analytics</div>
           <div class="spacer"></div>
-          <button class="btn-primary" data-act="exportCsv">Export CSV</button>
+          <button class="btn-primary" data-act="openExportPicker">Export CSV</button>
         </div>
         <div class="grid-3">
           ${barPanel('By Type', vm.typeBars, '#4FA3F7', 'narrow')}
@@ -1445,30 +1545,52 @@
     `;
   }
 
+  function renderCustomReportPreview(vm) {
+    const report = vm.selectedCustomReport;
+    if (!report) return `<div class="cell-dim">No saved reports yet — click "New Report" to create one.</div>`;
+    return `
+      <div class="cell-dim" style="margin-bottom:10px;">
+        Includes ${report.fields.length} field${report.fields.length === 1 ? '' : 's'} across all ${vm.donutTotal} assets. Use the Export CSV button at the top of the page to download it.
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+        ${report.fields.map((f) => `<span class="status-pill" style="background:rgba(79,163,247,0.14);color:#4FA3F7;">${escapeHtml(fieldLabel(f))}</span>`).join('')}
+      </div>
+      <button class="btn-ghost" style="border-color:#F2635B;color:#F2635B;" data-act="deleteCustomReport" data-id="${report.id}">Delete Report</button>
+    `;
+  }
+
   function renderCustomReportBuilder(vm) {
     const rb = vm.reportBuilder;
-    const fieldLabel = vm.reportFieldOptions.find((f) => f.value === rb.field).label;
+    const typeValue = rb.type === 'custom' ? `custom:${rb.customReportId}` : rb.type;
     const cols = '118px 96px 1fr 140px';
     return `
       <div class="panel" style="margin-top:16px;">
-        <div class="panel-title">Custom Reports</div>
+        <div class="page-header-row" style="margin-bottom:16px;">
+          <div class="panel-title" style="margin-bottom:0;">Custom Reports</div>
+          <div class="spacer"></div>
+          <button class="btn-ghost" data-act="openNewReport">New Report</button>
+        </div>
         <div class="form-row" style="margin-bottom:16px;">
           <div class="form-group">
             <div class="form-label">Report Type</div>
             <select class="form-select" data-bind="reportType">
               <option value="groupBy" ${rb.type === 'groupBy' ? 'selected' : ''}>Group &amp; count assets by field</option>
               <option value="emptyField" ${rb.type === 'emptyField' ? 'selected' : ''}>Find assets with an empty field</option>
+              ${vm.customReports.length ? `
+                <optgroup label="Saved Reports">
+                  ${vm.customReports.map((r) => `<option value="custom:${r.id}" ${typeValue === `custom:${r.id}` ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
+                </optgroup>
+              ` : ''}
             </select>
           </div>
-          <div class="form-group">
-            <div class="form-label">Field</div>
-            <select class="form-select" data-bind="reportField">
-              ${vm.reportFieldOptions.map((f) => `<option value="${f.value}" ${f.value === rb.field ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-group" style="justify-content:flex-end;display:flex;">
-            <button class="btn-ghost" style="width:100%;" data-act="exportCustomReport">Export CSV</button>
-          </div>
+          ${rb.type !== 'custom' ? `
+            <div class="form-group">
+              <div class="form-label">Field</div>
+              <select class="form-select" data-bind="reportField">
+                ${vm.reportFieldOptions.map((f) => `<option value="${f.value}" ${f.value === rb.field ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
         </div>
         ${rb.type === 'groupBy' ? `
           ${vm.reportGroups.length ? vm.reportGroups.map((g) => `
@@ -1478,9 +1600,9 @@
               <div class="bar-count">${g.count}</div>
             </div>
           `).join('') : `<div class="cell-dim">No data.</div>`}
-        ` : `
+        ` : rb.type === 'emptyField' ? `
           <div class="cell-dim" style="margin-bottom:10px;">
-            ${vm.reportRows.length} asset${vm.reportRows.length === 1 ? '' : 's'} with an empty ${escapeHtml(fieldLabel)} field${vm.reportRows.length > 50 ? ' — showing first 50, export CSV for the full list' : ''}.
+            ${vm.reportRows.length} asset${vm.reportRows.length === 1 ? '' : 's'} with an empty ${escapeHtml(vm.reportFieldOptions.find((f) => f.value === rb.field).label)} field${vm.reportRows.length > 50 ? ' — showing first 50' : ''}.
           </div>
           ${vm.reportRows.length ? `
             <div class="table-header" style="grid-template-columns:${cols};">
@@ -1497,7 +1619,58 @@
               `).join('')}
             </div>
           ` : `<div class="cell-dim">No assets have this field empty.</div>`}
-        `}
+        ` : renderCustomReportPreview(vm)}
+      </div>
+    `;
+  }
+
+  function renderNewReportModal(vm) {
+    return `
+      <div class="modal-overlay" data-act="closeNewReport">
+        <div class="modal-box" data-act="noop">
+          <div class="modal-header">
+            <div class="modal-title">New Custom Report</div>
+            <div class="modal-close" data-act="closeNewReport">×</div>
+          </div>
+          <div class="form-group">
+            <div class="form-label">Report Name</div>
+            <input class="form-input" type="text" data-bind="newReportForm.name" value="${escapeHtml(vm.newReportForm.name)}" placeholder="e.g. Printer Audit">
+            ${vm.newReportErrors.name ? `<div class="form-error">${escapeHtml(vm.newReportErrors.name)}</div>` : ''}
+          </div>
+          <div class="form-label" style="margin-bottom:8px;">Fields to include</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;max-height:280px;overflow-y:auto;margin-bottom:8px;">
+            ${ASSET_FIELD_OPTIONS.map((f) => `
+              <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;">
+                <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleReportField" data-field="${f.value}" ${vm.newReportForm.fields.includes(f.value) ? 'checked' : ''}>
+                ${escapeHtml(f.label)}
+              </label>
+            `).join('')}
+          </div>
+          ${vm.newReportErrors.fields ? `<div class="form-error">${escapeHtml(vm.newReportErrors.fields)}</div>` : ''}
+          <div class="modal-actions">
+            <button class="btn-secondary" data-act="closeNewReport">Cancel</button>
+            <button class="btn-submit" data-act="submitNewReport">Save Report</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderExportPickerModal(vm) {
+    return `
+      <div class="modal-overlay" data-act="closeExportPicker">
+        <div class="modal-box" style="max-width:420px;" data-act="noop">
+          <div class="modal-header">
+            <div class="modal-title">Export CSV</div>
+            <div class="modal-close" data-act="closeExportPicker">×</div>
+          </div>
+          <div class="account-hint">Choose what to export.</div>
+          <button class="btn-ghost" style="display:block;width:100%;text-align:left;margin-bottom:8px;" data-act="exportStandard">Standard Export (all fields)</button>
+          ${vm.customReports.map((r) => `
+            <button class="btn-ghost" style="display:block;width:100%;text-align:left;margin-bottom:8px;" data-act="exportNamedReport" data-id="${r.id}">${escapeHtml(r.name)}</button>
+          `).join('')}
+          ${vm.customReports.length === 0 ? `<div class="cell-dim">No saved custom reports yet.</div>` : ''}
+        </div>
       </div>
     `;
   }
@@ -1816,6 +1989,7 @@
                 ` : ''}
                 ${sc.status === 'Assigned' ? `<button class="btn-ghost users-row-btn" data-act="unassignSim" data-id="${sc.id}">Unassign</button>` : ''}
                 ${sc.status === 'Retired' && vm.isAdmin ? `<button class="btn-ghost users-row-btn" data-act="reactivateSim" data-id="${sc.id}">Reactivate</button>` : ''}
+                ${sc.status !== 'Assigned' && vm.isAdmin ? `<button class="btn-ghost users-row-btn" style="border-color:#F2635B;color:#F2635B;" data-act="deleteSim" data-id="${sc.id}">Delete</button>` : ''}
               </div>
             </div>
           `; }).join('')}

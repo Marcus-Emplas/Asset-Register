@@ -136,19 +136,48 @@ function attentionList(assets, limit) {
   for (const it of items) { if (!seen.has(it.id)) { seen.add(it.id); out.push(it); } if (out.length >= limit) break; }
   return out;
 }
-function buildCsv(rows) {
-  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'company', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
+const ASSET_FIELD_OPTIONS = [
+  { value: 'assetTag', label: 'Asset Tag' },
+  { value: 'itemType', label: 'Item Type' },
+  { value: 'model', label: 'Model' },
+  { value: 'serialNumber', label: 'Serial Number' },
+  { value: 'expressTag', label: 'Express Tag' },
+  { value: 'macAddress', label: 'MAC Address' },
+  { value: 'ipAddress', label: 'IP Address' },
+  { value: 'imei', label: 'IMEI' },
+  { value: 'wsusGroup', label: 'WSUS Group' },
+  { value: 'telephoneNumber', label: 'Telephone' },
+  { value: 'poNumber', label: 'PO Number' },
+  { value: 'deviceBlocked', label: 'Device Blocked' },
+  { value: 'location', label: 'Location' },
+  { value: 'company', label: 'Company' },
+  { value: 'firstName', label: 'Assignee First Name' },
+  { value: 'lastName', label: 'Assignee Last Name' },
+  { value: 'dateAcquired', label: 'Date Acquired' },
+  { value: 'dateDeployed', label: 'Date Deployed' },
+  { value: 'returnDate', label: 'Return Date' },
+  { value: 'dateRetired', label: 'Date Retired' },
+  { value: 'notes', label: 'Notes' },
+  { value: 'agreementSigned', label: 'Agreement Signed' },
+  { value: 'supplier', label: 'Supplier' },
+  { value: 'status', label: 'Status' },
+];
+function buildCsvForFields(rows, cols) {
   const header = cols.join(',');
   const lines = rows.map((r) => cols.map((c) => {
     let v = r[c];
     if (typeof v === 'boolean') v = v ? 'Yes' : 'No';
     if (v === null || v === undefined) v = '';
     v = String(v);
-    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; 
+    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
     v = v.replace(/"/g, '""');
     return /[,"\n]/.test(v) ? `"${v}"` : v;
   }).join(','));
   return [header, ...lines].join('\n');
+}
+function buildCsv(rows) {
+  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'company', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
+  return buildCsvForFields(rows, cols);
 }
 function parseCsv(text) {
   const rows = [];
