@@ -1522,15 +1522,17 @@
           ${barPanel('By Location', vm.deprecatedLocationBars, '#F2B84B', 'wide')}
           ${barPanel('By Supplier', vm.deprecatedSupplierBars, '#8B7CF6', 'narrow')}
         </div>
-        <div class="panel">
+        <div class="panel" style="margin-bottom:16px;">
           <div class="panel-title">Retirements by Month</div>
-          ${vm.deprecatedByMonth.map((bar) => `
-            <div class="bar-row">
-              <div class="bar-label">${escapeHtml(bar.label)}</div>
-              <div class="bar-track"><div class="bar-fill" style="background:#8792A2;width:${bar.pct}%;"></div></div>
-              <div class="bar-count">${bar.count}</div>
-            </div>
-          `).join('')}
+          <div class="scroll-panel-body">
+            ${vm.deprecatedByMonth.map((bar) => `
+              <div class="bar-row">
+                <div class="bar-label">${escapeHtml(bar.label)}</div>
+                <div class="bar-track"><div class="bar-fill" style="background:#8792A2;width:${bar.pct}%;"></div></div>
+                <div class="bar-count">${bar.count}</div>
+              </div>
+            `).join('')}
+          </div>
         </div>
         <div class="panel" style="padding:0;">
           <div class="panel-title" style="padding:16px 20px 0;">Deprecated Register</div>
