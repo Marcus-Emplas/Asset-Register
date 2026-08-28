@@ -1,6 +1,7 @@
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch'];
 const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
+const COMPANIES = ['Emplas', 'T&K', 'Acorn Aluminium', 'EVA CRM', 'Emplas Commercial North', 'Padiham Glass', 'GlazeReach'];
 const STATUSES = ['In Use', 'In Stock', 'In Repair', 'Retired'];
 const TODAY_ISO = new Date().toISOString().slice(0, 10);
 const TODAY = new Date(TODAY_ISO + 'T00:00:00');
@@ -136,7 +137,7 @@ function attentionList(assets, limit) {
   return out;
 }
 function buildCsv(rows) {
-  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
+  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'company', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
   const header = cols.join(',');
   const lines = rows.map((r) => cols.map((c) => {
     let v = r[c];
@@ -183,7 +184,7 @@ function parseCsv(text) {
     });
 }
 function freshForm() {
-  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'London HQ', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
+  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'London HQ', company: '', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
 }
 function freshSimForm() {
   return { phoneNumber: '', carrier: '', plan: '', iccid: '' };

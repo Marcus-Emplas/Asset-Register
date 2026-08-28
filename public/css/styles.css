@@ -234,7 +234,7 @@ button, input, select { font-family: inherit; }
 
 .table-header {
   flex-shrink: 0; display: grid;
-  grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 108px 96px;
+  grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 120px 108px 96px;
   gap: 12px; padding: 9px 20px; border-bottom: 1px solid var(--border);
   font-size: 11px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.04em;
 }
@@ -244,7 +244,7 @@ button, input, select { font-family: inherit; }
 .table-body { flex: 1; overflow-y: auto; }
 
 .table-row {
-  display: grid; grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 108px 96px;
+  display: grid; grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 120px 108px 96px;
   gap: 12px; align-items: center; padding: 11px 20px;
   border-bottom: 1px solid var(--bg-field); cursor: pointer; font-size: 12.5px;
 }

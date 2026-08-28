@@ -15,6 +15,26 @@
     return `rgba(${r},${g},${b},0.14)`;
   }
 
+  const REPORT_GROUP_FIELDS = [
+    { value: 'itemType', label: 'Item Type' },
+    { value: 'location', label: 'Location' },
+    { value: 'company', label: 'Company' },
+    { value: 'supplier', label: 'Supplier' },
+    { value: 'status', label: 'Status' },
+  ];
+  const REPORT_EMPTY_FIELDS = [
+    { value: 'company', label: 'Company' },
+    { value: 'serialNumber', label: 'Serial Number' },
+    { value: 'poNumber', label: 'PO Number' },
+    { value: 'macAddress', label: 'MAC Address' },
+    { value: 'ipAddress', label: 'IP Address' },
+    { value: 'telephoneNumber', label: 'Telephone' },
+    { value: 'expressTag', label: 'Express Tag' },
+    { value: 'wsusGroup', label: 'WSUS Group' },
+    { value: 'notes', label: 'Notes' },
+  ];
+  function isEmptyValue(v) { return !v || v === '—'; }
+
   class App {
     constructor() {
       this.state = {
@@ -22,7 +42,8 @@
         screen: 'overview', search: '', statusFilter: [], typeFilter: '', locationFilter: '',
         sortCol: 'assetTag', sortDir: 'asc', page: 1, selectedId: null, drawerOpen: false,
         addOpen: false, form: freshForm(), formErrors: {},
-        assignForm: { assignedName: '', location: '', deviceBlocked: false, agreementSigned: false },
+        assignForm: { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
+        reportBuilder: { type: 'groupBy', field: 'itemType' },
         currentUser: null,
         authScreen: 'login', authForm: { email: '', password: '' }, authError: '', authInfo: '', authSubmitting: false,
         mfaForm: { token: '' }, mfaError: '',
@@ -124,7 +145,7 @@
       const asset = this.state.assets.find((a) => a.id === id);
       this.setState({
         selectedId: id, drawerOpen: true,
-        assignForm: asset ? this.assignFormFromAsset(asset) : { assignedName: '', location: '', deviceBlocked: false, agreementSigned: false },
+        assignForm: asset ? this.assignFormFromAsset(asset) : { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
       });
     }
     closeDetail() { this.setState({ drawerOpen: false }); }
@@ -257,7 +278,7 @@
       const lastName = spaceIdx === -1 ? '' : name.slice(spaceIdx + 1);
       try {
         const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, {
-          firstName, lastName, location: f.location,
+          firstName, lastName, location: f.location, company: f.company,
           deviceBlocked: !!f.deviceBlocked, agreementSigned: !!f.agreementSigned,
         });
         this.applyAssetUpdate(updated);
@@ -346,6 +367,30 @@
     }
 
     setDeprecatedPage(page) { this.setState({ deprecatedPage: page }); }
+
+    setReportType(type) {
+      const fieldOptions = type === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
+      this.setState({ reportBuilder: { type, field: fieldOptions[0].value } });
+    }
+    setReportField(field) { this.setState((s) => ({ reportBuilder: { ...s.reportBuilder, field } })); }
+
+    exportCustomReport() {
+      const vm = this.computeViewModel();
+      const fieldLabel = vm.reportFieldOptions.find((f) => f.value === vm.reportBuilder.field).label;
+      let csv;
+      if (vm.reportBuilder.type === 'groupBy') {
+        csv = ['field,count', ...vm.reportGroups.map((g) => `"${g.label.replace(/"/g, '""')}",${g.count}`)].join('\n');
+      } else {
+        csv = buildCsv(vm.reportRows);
+      }
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `report-${vm.reportBuilder.type}-${fieldLabel.replace(/\s+/g, '-').toLowerCase()}.csv`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      this.showToast('Report CSV export started');
+    }
 
     async goUsers() {
       this.setState({ screen: 'users', drawerOpen: false });
@@ -669,7 +714,7 @@
       const rows = pageRows.map((asset) => ({
         id: asset.id, assetTag: asset.assetTag, itemType: asset.itemType, model: asset.model,
         assigneeName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '—',
-        location: asset.location, ipAddress: asset.ipAddress, status: asset.status,
+        location: asset.location, company: asset.company, ipAddress: asset.ipAddress, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
         deployedStr: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—',
         selected: st.selectedIds.includes(asset.id),
@@ -769,7 +814,21 @@
         simCards: st.simCards, simForm: st.simForm, simFormErrors: st.simFormErrors,
         assignableMobiles: all.filter((a) => a.itemType === 'Mobile Phone' && a.status !== 'Retired'),
         availableSims: st.simCards.filter((sc) => sc.status === 'Available'),
+        ...this.computeReportBuilderVm(all),
       };
+    }
+
+    computeReportBuilderVm(all) {
+      const rb = this.state.reportBuilder;
+      const fieldOptions = rb.type === 'groupBy' ? REPORT_GROUP_FIELDS : REPORT_EMPTY_FIELDS;
+      const field = fieldOptions.some((f) => f.value === rb.field) ? rb.field : fieldOptions[0].value;
+      let reportGroups = null, reportRows = null;
+      if (rb.type === 'groupBy') {
+        reportGroups = groupCounts(all, field).map((g) => ({ ...g, pct: Math.round((g.count / (all.length || 1)) * 100) }));
+      } else {
+        reportRows = all.filter((a) => isEmptyValue(a[field]));
+      }
+      return { reportBuilder: rb, reportFieldOptions: fieldOptions, reportGroups, reportRows };
     }
 
     buildDetail(id) {
@@ -822,7 +881,8 @@
     assignFormFromAsset(asset) {
       return {
         assignedName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '',
-        location: asset.location, deviceBlocked: asset.deviceBlocked, agreementSigned: asset.agreementSigned,
+        location: asset.location, company: asset.company || '',
+        deviceBlocked: asset.deviceBlocked, agreementSigned: asset.agreementSigned,
       };
     }
 
@@ -870,6 +930,7 @@
           case 'goReports': this.setScreen('reports'); break;
           case 'goDeprecated': this.setScreen('deprecated'); break;
           case 'exportDeprecatedCsv': this.exportDeprecatedCsv(); break;
+          case 'exportCustomReport': this.exportCustomReport(); break;
           case 'prevDeprecatedPage': this.setDeprecatedPage(Math.max(1, this.state.deprecatedPage - 1)); break;
           case 'nextDeprecatedPage': {
             const vm = this.computeViewModel();
@@ -964,6 +1025,8 @@
         if (!bind) return;
         if (bind === 'typeFilter') this.setTypeFilter(el.value);
         else if (bind === 'locationFilter') this.setLocationFilter(el.value);
+        else if (bind === 'reportType') this.setReportType(el.value);
+        else if (bind === 'reportField') this.setReportField(el.value);
         else if (bind.startsWith('form.')) this.updateFormField(bind.slice(5), el.value);
         else if (bind.startsWith('userForm.')) this.updateUserField(bind.slice(9), el.value);
         else if (bind.startsWith('userRole.')) this.changeUserRole(bind.slice(9), el.value);
@@ -1310,6 +1373,7 @@
             <div>MODEL</div>
             <div>ASSIGNED TO</div>
             <div>LOCATION</div>
+            <div>COMPANY</div>
             <div>IP ADDRESS</div>
             <div class="sortable" data-act="sortStatus">STATUS ${arrow('status')}</div>
             <div class="sortable" data-act="sortDeployed">DEPLOYED ${arrow('dateDeployed')}</div>
@@ -1323,6 +1387,7 @@
                 <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(row.model)}</div>
                 <div class="cell-dim cell-ellipsis">${escapeHtml(row.assigneeName)}</div>
                 <div class="cell-dim cell-ellipsis">${escapeHtml(row.location)}</div>
+                <div class="cell-dim cell-ellipsis">${escapeHtml(row.company || '—')}</div>
                 <div class="cell-mono cell-ellipsis">${row.ipAddress ? `<a class="ip-link" href="http://${encodeURIComponent(row.ipAddress)}" target="_blank" rel="noopener noreferrer" data-act="noop">${escapeHtml(row.ipAddress)}</a>` : '<span class="cell-dim">—</span>'}</div>
                 <div><span class="status-pill" style="background:${row.statusBg};color:${row.statusColor};">${escapeHtml(row.status)}</span></div>
                 <div class="cell-deployed">${escapeHtml(row.deployedStr)}</div>
@@ -1375,6 +1440,64 @@
             </div>
           `).join('')}
         </div>
+        ${vm.isAdmin ? renderCustomReportBuilder(vm) : ''}
+      </div>
+    `;
+  }
+
+  function renderCustomReportBuilder(vm) {
+    const rb = vm.reportBuilder;
+    const fieldLabel = vm.reportFieldOptions.find((f) => f.value === rb.field).label;
+    const cols = '118px 96px 1fr 140px';
+    return `
+      <div class="panel" style="margin-top:16px;">
+        <div class="panel-title">Custom Reports</div>
+        <div class="form-row" style="margin-bottom:16px;">
+          <div class="form-group">
+            <div class="form-label">Report Type</div>
+            <select class="form-select" data-bind="reportType">
+              <option value="groupBy" ${rb.type === 'groupBy' ? 'selected' : ''}>Group &amp; count assets by field</option>
+              <option value="emptyField" ${rb.type === 'emptyField' ? 'selected' : ''}>Find assets with an empty field</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">Field</div>
+            <select class="form-select" data-bind="reportField">
+              ${vm.reportFieldOptions.map((f) => `<option value="${f.value}" ${f.value === rb.field ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group" style="justify-content:flex-end;display:flex;">
+            <button class="btn-ghost" style="width:100%;" data-act="exportCustomReport">Export CSV</button>
+          </div>
+        </div>
+        ${rb.type === 'groupBy' ? `
+          ${vm.reportGroups.length ? vm.reportGroups.map((g) => `
+            <div class="bar-row">
+              <div class="bar-label wide">${escapeHtml(g.label)}</div>
+              <div class="bar-track"><div class="bar-fill" style="background:#4FA3F7;width:${g.pct}%;"></div></div>
+              <div class="bar-count">${g.count}</div>
+            </div>
+          `).join('') : `<div class="cell-dim">No data.</div>`}
+        ` : `
+          <div class="cell-dim" style="margin-bottom:10px;">
+            ${vm.reportRows.length} asset${vm.reportRows.length === 1 ? '' : 's'} with an empty ${escapeHtml(fieldLabel)} field${vm.reportRows.length > 50 ? ' — showing first 50, export CSV for the full list' : ''}.
+          </div>
+          ${vm.reportRows.length ? `
+            <div class="table-header" style="grid-template-columns:${cols};">
+              <div>TAG</div><div>TYPE</div><div>MODEL</div><div>LOCATION</div>
+            </div>
+            <div class="table-body" style="max-height:320px;">
+              ${vm.reportRows.slice(0, 50).map((a) => `
+                <div class="table-row" style="grid-template-columns:${cols};" data-act="openDetail" data-id="${escapeHtml(a.id)}">
+                  <div class="cell-mono">${escapeHtml(a.assetTag)}</div>
+                  <div class="cell-dim">${escapeHtml(a.itemType)}</div>
+                  <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(a.model)}</div>
+                  <div class="cell-dim cell-ellipsis">${escapeHtml(a.location)}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="cell-dim">No assets have this field empty.</div>`}
+        `}
       </div>
     `;
   }
@@ -1469,6 +1592,7 @@
           <div class="drawer-section-title">Assignment</div>
           <div class="drawer-field-row"><div class="drawer-field-label">Assigned To</div><div class="drawer-field-value">${escapeHtml(f.assignedName || '—')}</div></div>
           <div class="drawer-field-row"><div class="drawer-field-label">Location</div><div class="drawer-field-value">${escapeHtml(f.location)}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Company</div><div class="drawer-field-value">${escapeHtml(f.company || '—')}</div></div>
           <div class="drawer-field-row"><div class="drawer-field-label">Device Blocked</div><div class="drawer-field-value">${f.deviceBlocked ? 'Yes' : 'No'}</div></div>
           <div class="drawer-field-row"><div class="drawer-field-label">Agreement Signed</div><div class="drawer-field-value">${f.agreementSigned ? 'Yes' : 'No'}</div></div>
         </div>
@@ -1491,7 +1615,13 @@
               ${LOCATIONS.map((l) => `<option value="${escapeHtml(l)}" ${l === f.location ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
             </select>
           </div>
-          <div class="form-group"></div>
+          <div class="form-group">
+            <div class="form-label">Company</div>
+            <select class="form-select" data-bind="assignForm.company">
+              <option value="" ${!f.company ? 'selected' : ''}>—</option>
+              ${COMPANIES.map((c) => `<option value="${escapeHtml(c)}" ${c === f.company ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+            </select>
+          </div>
         </div>
         <div class="form-row" style="margin-bottom:14px;">
           <div class="form-group">
@@ -1594,6 +1724,17 @@
               <div class="form-label">Location</div>
               <select class="form-select" data-bind="form.location">${opts(LOCATIONS, form.location)}</select>
             </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <div class="form-label">Company</div>
+              <select class="form-select" data-bind="form.company">
+                <option value="">—</option>
+                ${opts(COMPANIES, form.company)}
+              </select>
+            </div>
+            <div class="form-group"></div>
           </div>
 
           <div class="form-row">

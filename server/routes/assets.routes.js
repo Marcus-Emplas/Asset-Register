@@ -239,6 +239,14 @@ router.patch('/:id', (req, res) => {
     }
   }
 
+  if (body.company !== undefined) {
+    const company = (body.company || '').trim();
+    if (company !== existing.company) {
+      updates.company = company;
+      historyLines.push(company ? `Company set to ${company}` : 'Company cleared');
+    }
+  }
+
   if (body.deviceBlocked !== undefined) {
     const blocked = !!body.deviceBlocked;
     if (blocked !== existing.deviceBlocked) {
