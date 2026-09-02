@@ -126,6 +126,14 @@
   function resizeHandle(tableKey, key) {
     return `<div class="col-resize-handle" data-resize-table="${tableKey}" data-resize-key="${key}"></div>`;
   }
+
+  const SIDEBAR_COLLAPSED_KEY = 'assetHub.sidebarCollapsed';
+  function loadSidebarCollapsed() {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'; } catch (e) { return false; }
+  }
+  function saveSidebarCollapsed(collapsed) {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+  }
   // Renders the toggleable header cells for a table. `arrowFn(def)` supplies
   // the sort arrow text for sortable columns; `noHandleOnLast` suppresses the
   // handle on the last visible column when nothing (no pinned column) follows it.
@@ -167,6 +175,7 @@
         deprecatedPage: 1,
         columnWidths: loadColumnWidths(),
         columnPrefs: {}, columnPickerTable: null,
+        sidebarCollapsed: loadSidebarCollapsed(),
         csvImport: { open: false, step: 'pick', fileName: '', rows: [] },
         users: [], userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
         accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
@@ -227,6 +236,11 @@
     }
 
     setScreen(screen) { this.setState({ screen, drawerOpen: false }); }
+    toggleSidebar() {
+      const collapsed = !this.state.sidebarCollapsed;
+      saveSidebarCollapsed(collapsed);
+      this.setState({ sidebarCollapsed: collapsed });
+    }
     setSearch(value) {
       // Update state immediately but debounce the re-render: rebuilding the
       // page on every keystroke replaces the search <input> DOM node, which
@@ -1062,6 +1076,7 @@
         columnWidths: st.columnWidths,
         columnPrefs: st.columnPrefs,
         columnPickerTable: st.columnPickerTable,
+        sidebarCollapsed: st.sidebarCollapsed,
         kpis, typeBars, locationBars, supplierBars, donutSegs,
         donutTotal: summary.total.toLocaleString(),
         attention,
@@ -1252,6 +1267,7 @@
         const act = el.getAttribute('data-act');
         const id = el.getAttribute('data-id');
         switch (act) {
+          case 'toggleSidebar': this.toggleSidebar(); break;
           case 'goOverview': this.setScreen('overview'); break;
           case 'goAssets': this.setScreen('assets'); break;
           case 'goReports': this.setScreen('reports'); break;
@@ -1543,19 +1559,24 @@
 
   function renderSidebar(vm) {
     const item = (screen, label, act) => `
-      <div class="nav-item ${vm.screen === screen ? 'active' : ''}" data-act="${act}">
-        <div class="nav-dot"></div>${label}
+      <div class="nav-item ${vm.screen === screen ? 'active' : ''}" data-act="${act}" title="${escapeHtml(label)}">
+        <div class="nav-dot"></div>
+        <div class="nav-letter">${escapeHtml(label[0])}</div>
+        <span class="nav-label">${escapeHtml(label)}</span>
       </div>`;
     return `
-      <div class="sidebar">
-        ${item('overview', 'Overview', 'goOverview')}
-        ${item('assets', 'Assets', 'goAssets')}
-        ${item('reports', 'Reports & Analytics', 'goReports')}
-        ${item('deprecated', 'Deprecated', 'goDeprecated')}
-        ${item('simcards', 'SIM Cards', 'goSimCards')}
-        ${vm.isAdmin ? item('users', 'Users', 'goUsers') : ''}
+      <div class="sidebar ${vm.sidebarCollapsed ? 'collapsed' : ''}">
+        <div class="nav-items">
+          ${item('overview', 'Overview', 'goOverview')}
+          ${item('assets', 'Assets', 'goAssets')}
+          ${item('reports', 'Reports & Analytics', 'goReports')}
+          ${item('deprecated', 'Deprecated', 'goDeprecated')}
+          ${item('simcards', 'SIM Cards', 'goSimCards')}
+          ${vm.isAdmin ? item('users', 'Users', 'goUsers') : ''}
+        </div>
         <div class="spacer"></div>
         <div class="nav-footer">v2.4 · ${vm.donutTotal} assets</div>
+        <div class="sidebar-toggle" data-act="toggleSidebar" title="${vm.sidebarCollapsed ? 'Expand' : 'Collapse'} sidebar">${vm.sidebarCollapsed ? '»' : '«'}</div>
       </div>
     `;
   }

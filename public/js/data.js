@@ -1,4 +1,4 @@
-const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch'];
+const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch', 'Scanner', 'Scan Gun', 'Docking Station', 'Access Point'];
 const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
 const COMPANIES = ['Emplas', 'T&K', 'Acorn Aluminium', 'EVA CRM', 'Emplas Commercial North', 'Padiham Glass', 'GlazeReach'];
@@ -19,6 +19,10 @@ const MODELS = {
   'Server': ['Dell PowerEdge R740', 'Dell PowerEdge R650', 'HP ProLiant DL380 Gen10'],
   'Printer': ['HP LaserJet Pro M404', 'Canon imageRUNNER 2630i'],
   'Network Switch': ['Cisco Catalyst 9300', 'Cisco Catalyst 2960-X', 'Juniper EX2300'],
+  'Scanner': ['Epson WorkForce ES-580W', 'Fujitsu ScanSnap iX1600', 'Canon imageFORMULA R40'],
+  'Scan Gun': ['Zebra DS2278', 'Honeywell Voyager 1470g', 'Datalogic QuickScan QD2430'],
+  'Docking Station': ['Dell WD22TB4', 'Lenovo ThinkPad Universal Thunderbolt 4', 'HP USB-C G5 Essential'],
+  'Access Point': ['Cisco Meraki MR46', 'Ubiquiti UniFi U6-Pro', 'Aruba AP-515'],
 };
 const WSUS_GROUPS = ['WSUS-CORP-WKS01', 'WSUS-CORP-WKS02', 'WSUS-SERVERS-PROD', 'WSUS-FINANCE', 'WSUS-EXEC', 'WSUS-REMOTE', 'WSUS-LAB'];
 const FIRST_NAMES = ['Olivia', 'Liam', 'Emma', 'Noah', 'Ava', 'Oliver', 'Isla', 'George', 'Amelia', 'Jack', 'Sophia', 'Harry', 'Mia', 'Jacob', 'Grace', 'Charlie', 'Ella', 'Freddie', 'Poppy', 'Alfie', 'Ruby', 'Oscar', 'Lily', 'Leo', 'Chloe', 'Archie', 'Freya', 'Theo', 'Isabella', 'Arthur'];
@@ -57,7 +61,7 @@ function formatDate(iso) {
 function generateAssets(count, seed) {
   const rng = mulberry32(seed || 1337);
   const assets = [];
-  const typeWeights = [['Laptop', 32], ['Desktop', 9], ['Mobile Phone', 22], ['Tablet', 6], ['Monitor', 15], ['Server', 3], ['Printer', 6], ['Network Switch', 3]];
+  const typeWeights = [['Laptop', 32], ['Desktop', 9], ['Mobile Phone', 22], ['Tablet', 6], ['Monitor', 15], ['Server', 3], ['Printer', 6], ['Network Switch', 3], ['Scanner', 2], ['Scan Gun', 4], ['Docking Station', 5], ['Access Point', 3]];
   const start2019 = new Date('2019-01-01');
   for (let i = 0; i < count; i++) {
     const itemType = weightedPick(rng, typeWeights);
