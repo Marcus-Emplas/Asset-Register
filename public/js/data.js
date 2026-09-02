@@ -219,6 +219,15 @@ function parseCsv(text) {
 function freshForm() {
   return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'On Site', company: '', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
 }
+function freshDetailForm() {
+  return {
+    assetTag: '', itemType: '', model: '', serialNumber: '', expressTag: '',
+    macAddress: '', ipAddress: '', imei: '', telephoneNumber: '', wsusGroup: '',
+    supplier: '', poNumber: '', dateAcquired: '', dateDeployed: '', returnDate: '', dateRetired: '',
+    assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false,
+    notes: '', costTracked: false, cost: '',
+  };
+}
 function freshSimForm() {
   return { phoneNumber: '', carrier: '', plan: '', iccid: '' };
 }

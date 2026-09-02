@@ -159,8 +159,7 @@
         screen: 'overview', search: '', statusFilter: [], typeFilter: '', locationFilter: '',
         sortCol: 'assetTag', sortDir: 'asc', page: 1, selectedId: null, drawerOpen: false,
         addOpen: false, form: freshForm(), formErrors: {},
-        assignForm: { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
-        notesForm: { notes: '', costTracked: false, cost: '' },
+        detailForm: freshDetailForm(),
         reportBuilder: { customReportId: null },
         customReports: [],
         newReportOpen: false, newReportForm: { name: '', fields: [] }, newReportErrors: {},
@@ -282,8 +281,7 @@
       const asset = this.state.assets.find((a) => a.id === id);
       this.setState({
         selectedId: id, drawerOpen: true,
-        assignForm: asset ? this.assignFormFromAsset(asset) : { assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false },
-        notesForm: asset ? this.notesFormFromAsset(asset) : { notes: '', costTracked: false, cost: '' },
+        detailForm: asset ? this.detailFormFromAsset(asset) : freshDetailForm(),
       });
     }
     closeDetail() { this.setState({ drawerOpen: false }); }
@@ -456,30 +454,59 @@
       this.setState((s) => ({ assets: s.assets.map((a) => (a.id === updated.id ? updated : a)) }));
     }
 
-    updateAssignField(field, value) {
+    updateDetailField(field, value) {
       // Mutate state directly instead of a full setState/render — the
       // <select> already shows the chosen option natively, and nothing else
       // on screen depends on this value until Save is pressed, so rebuilding
       // the whole drawer here would only cost scroll position for no benefit.
-      this.state.assignForm[field] = value;
+      this.state.detailForm[field] = value;
     }
 
-    async submitAssignment(assetTag) {
-      const f = this.state.assignForm;
+    async submitDetail(originalTag) {
+      const f = this.state.detailForm;
+      const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
       const name = f.assignedName.trim();
       const spaceIdx = name.indexOf(' ');
       const firstName = spaceIdx === -1 ? name : name.slice(0, spaceIdx);
       const lastName = spaceIdx === -1 ? '' : name.slice(spaceIdx + 1);
-      const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
-      const payload = { firstName, lastName, location: f.location, agreementSigned: !!f.agreementSigned };
-      if (isAdmin) { payload.company = f.company; payload.deviceBlocked = !!f.deviceBlocked; }
+
+      const payload = {
+        assetTag: f.assetTag.trim(), itemType: f.itemType, model: f.model,
+        serialNumber: f.serialNumber, expressTag: f.expressTag, macAddress: f.macAddress,
+        ipAddress: f.ipAddress, imei: f.imei, telephoneNumber: f.telephoneNumber, wsusGroup: f.wsusGroup,
+        supplier: f.supplier, poNumber: f.poNumber,
+        dateAcquired: f.dateAcquired, dateDeployed: f.dateDeployed, returnDate: f.returnDate, dateRetired: f.dateRetired,
+        firstName, lastName, location: f.location, agreementSigned: !!f.agreementSigned,
+        notes: f.notes,
+      };
+      if (isAdmin) {
+        payload.company = f.company; payload.deviceBlocked = !!f.deviceBlocked;
+        payload.costTracked = !!f.costTracked; payload.cost = f.cost;
+      }
       try {
-        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, payload);
-        this.applyAssetUpdate(updated);
-        this.setState({ assignForm: this.assignFormFromAsset(updated) });
-        this.showToast(`${assetTag} updated`);
+        const updated = await Api.patch(`/api/assets/${encodeURIComponent(originalTag)}`, payload);
+        if (updated.assetTag !== originalTag) {
+          // The tag was renamed — the asset's id changed, so it has to be
+          // matched by its old id (applyAssetUpdate matches by the NEW id,
+          // which no longer exists anywhere in the array) and the drawer's
+          // selection re-pointed at the new one.
+          this.setState((s) => ({
+            assets: s.assets.map((a) => (a.id === originalTag ? updated : a)),
+            selectedId: updated.id,
+          }));
+        } else {
+          this.applyAssetUpdate(updated);
+        }
+        this.setState({ detailForm: this.detailFormFromAsset(updated) });
+        this.showToast(`${updated.assetTag} saved`);
       } catch (e) {
-        this.showToast(e.data && e.data.error === 'asset_retired' ? 'Retired assets cannot be edited' : 'Failed to update asset');
+        let msg = 'Failed to save changes';
+        if (e.status === 400 && e.data && e.data.error === 'asset_retired') msg = 'Retired assets cannot be edited';
+        else if (e.status === 400 && e.data && e.data.fields) {
+          const firstKey = Object.keys(e.data.fields)[0];
+          if (firstKey) msg = e.data.fields[firstKey];
+        }
+        this.showToast(msg);
       }
     }
 
@@ -487,7 +514,7 @@
       try {
         const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, { firstName: '', lastName: '' });
         this.applyAssetUpdate(updated);
-        this.setState({ assignForm: this.assignFormFromAsset(updated) });
+        this.setState({ detailForm: this.detailFormFromAsset(updated) });
         this.showToast(`${assetTag} unassigned`);
       } catch (e) {
         this.showToast('Failed to unassign');
@@ -499,24 +526,9 @@
       // place instead of a full setState/render — avoids rebuilding the
       // whole drawer (and losing scroll position / any in-progress typing
       // elsewhere on the page) just to flip one checkbox.
-      this.state.notesForm.costTracked = checked;
-      const costInput = root.querySelector('[data-bind="notesForm.cost"]');
+      this.state.detailForm.costTracked = checked;
+      const costInput = root.querySelector('[data-bind="detailForm.cost"]');
       if (costInput) costInput.disabled = !checked;
-    }
-
-    async submitNotes(assetTag) {
-      const f = this.state.notesForm;
-      const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
-      const payload = { notes: f.notes };
-      if (isAdmin) { payload.costTracked = !!f.costTracked; payload.cost = f.cost; }
-      try {
-        const updated = await Api.patch(`/api/assets/${encodeURIComponent(assetTag)}`, payload);
-        this.applyAssetUpdate(updated);
-        this.setState({ notesForm: this.notesFormFromAsset(updated) });
-        this.showToast(`${assetTag} notes saved`);
-      } catch (e) {
-        this.showToast(e.data && e.data.error === 'asset_retired' ? 'Retired assets cannot be edited' : 'Failed to save notes');
-      }
     }
 
     async checkInOut(id) {
@@ -1124,23 +1136,6 @@
       const asset = this.state.assets.find((a) => a.id === id);
       if (!asset) return null;
       const isAdmin = !!(this.state.currentUser && this.state.currentUser.role === 'admin');
-      const sections = [
-        { title: 'Identification', fields: [
-          { label: 'Asset Tag', value: asset.assetTag }, { label: 'Item Type', value: asset.itemType }, { label: 'Model', value: asset.model },
-          { label: 'Serial Number', value: asset.serialNumber }, { label: 'Express Tag', value: asset.expressTag || '—' },
-        ] },
-        { title: 'Network', fields: [
-          { label: 'MAC Address', value: asset.macAddress || '—' },
-          { label: 'IP Address', value: asset.ipAddress || '—', link: asset.ipAddress ? `http://${encodeURIComponent(asset.ipAddress)}` : null },
-          { label: 'IMEI', value: asset.imei || '—' },
-          { label: 'Telephone', value: asset.telephoneNumber || '—' }, { label: 'WSUS Group', value: asset.wsusGroup || '—' },
-        ] },
-        { title: 'Lifecycle', fields: [
-          { label: 'Supplier', value: asset.supplier }, { label: 'PO Number', value: asset.poNumber },
-          { label: 'Date Acquired', value: formatDate(asset.dateAcquired) }, { label: 'Date Deployed', value: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—' },
-          { label: 'Return Date', value: asset.returnDate ? formatDate(asset.returnDate) : '—' }, { label: 'Date Retired', value: asset.dateRetired ? formatDate(asset.dateRetired) : '—' },
-        ] },
-      ];
       const actions = [];
       if (asset.status === 'In Use') {
         actions.push({ act: 'checkInOut', label: 'Check In', color: '#E8EDF3', border: '#2E3846' });
@@ -1160,27 +1155,27 @@
       return {
         id: asset.id, assetTag: asset.assetTag, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
-        sections, history: [...asset.history].reverse().map((h) => ({ date: formatDate(h.date), text: h.text })),
+        history: [...asset.history].reverse().map((h) => ({ date: formatDate(h.date), text: h.text })),
         actions, isRetired: asset.status === 'Retired',
         isMobile, currentSim, availableSims,
-        assignForm: this.state.assignForm, assigneeNames,
-        notesForm: this.state.notesForm,
+        detailForm: this.state.detailForm, assigneeNames,
         isAdmin,
       };
     }
 
-    assignFormFromAsset(asset) {
+    detailFormFromAsset(asset) {
       return {
+        assetTag: asset.assetTag, itemType: asset.itemType, model: asset.model,
+        serialNumber: asset.serialNumber || '', expressTag: asset.expressTag || '',
+        macAddress: asset.macAddress || '', ipAddress: asset.ipAddress || '', imei: asset.imei || '',
+        telephoneNumber: asset.telephoneNumber || '', wsusGroup: asset.wsusGroup || '',
+        supplier: asset.supplier || '', poNumber: asset.poNumber || '',
+        dateAcquired: asset.dateAcquired || '', dateDeployed: asset.dateDeployed || '',
+        returnDate: asset.returnDate || '', dateRetired: asset.dateRetired || '',
         assignedName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '',
         location: asset.location, company: asset.company || '',
         deviceBlocked: asset.deviceBlocked, agreementSigned: asset.agreementSigned,
-      };
-    }
-
-    notesFormFromAsset(asset) {
-      return {
-        notes: asset.notes || '',
-        costTracked: asset.costTracked,
+        notes: asset.notes || '', costTracked: asset.costTracked,
         cost: asset.cost !== null && asset.cost !== undefined ? String(asset.cost) : '',
       };
     }
@@ -1339,10 +1334,9 @@
           case 'toggleUserActive': this.toggleUserActive(id); break;
           case 'resetUserMfa': this.resetUserMfa(id); break;
           case 'deleteUser': this.deleteUser(id); break;
-          case 'submitAssignment': this.submitAssignment(id); break;
+          case 'submitDetail': this.submitDetail(id); break;
           case 'unassignAsset': this.unassignAsset(id); break;
           case 'toggleCostTracked': this.toggleCostTracked(el.checked); break;
-          case 'submitNotes': this.submitNotes(id); break;
           case 'goSimCards': this.goSimCards(); break;
           case 'submitCreateSim': this.submitCreateSim(); break;
           case 'unassignSim': this.unassignSim(id); break;
@@ -1379,8 +1373,7 @@
         else if (bind.startsWith('userForm.')) s.userForm[bind.slice(9)] = el.value;
         else if (bind.startsWith('accountForm.')) s.accountForm[bind.slice(12)] = el.value;
         else if (bind.startsWith('simForm.')) s.simForm[bind.slice(8)] = el.value;
-        else if (bind.startsWith('assignForm.')) s.assignForm[bind.slice(11)] = el.value;
-        else if (bind.startsWith('notesForm.')) s.notesForm[bind.slice(10)] = el.value;
+        else if (bind.startsWith('detailForm.')) s.detailForm[bind.slice(11)] = el.value;
         else if (bind.startsWith('newReportForm.')) s.newReportForm[bind.slice(14)] = el.value;
       };
 
@@ -1397,10 +1390,10 @@
         else if (bind.startsWith('simForm.')) this.updateSimField(bind.slice(8), el.value);
         else if (bind.startsWith('assignSimRow.')) { if (el.value) this.assignSim(bind.slice(13), el.value); }
         else if (bind.startsWith('assignSim.')) { if (el.value) this.assignSim(el.value, bind.slice(10)); }
-        else if (bind === 'assignForm.deviceBlocked' || bind === 'assignForm.agreementSigned') {
-          this.updateAssignField(bind.slice(11), el.value === 'yes');
+        else if (bind === 'detailForm.deviceBlocked' || bind === 'detailForm.agreementSigned') {
+          this.updateDetailField(bind.slice(11), el.value === 'yes');
         }
-        else if (bind.startsWith('assignForm.')) this.updateAssignField(bind.slice(11), el.value);
+        else if (bind.startsWith('detailForm.')) this.updateDetailField(bind.slice(11), el.value);
       };
     }
   }
@@ -2015,8 +2008,93 @@
     `;
   }
 
-  function renderAssignmentEditBlock(sel) {
-    const f = sel.assignForm;
+  // Every plain identification/network/lifecycle field the drawer edits.
+  // `type` picks the widget: unset = text input, 'select' = dropdown from
+  // `options`, 'date' = native date input. Kept data-driven since these
+  // fields are otherwise identical boilerplate (label + data-bind + value).
+  const DETAIL_FIELD_GROUPS = [
+    { title: 'Identification', fields: [
+      { key: 'assetTag', label: 'Asset Tag', mono: true },
+      { key: 'itemType', label: 'Item Type', type: 'select', options: ITEM_TYPES },
+      { key: 'model', label: 'Model' },
+      { key: 'serialNumber', label: 'Serial Number', mono: true },
+      { key: 'expressTag', label: 'Express Tag', mono: true },
+    ] },
+    { title: 'Network', fields: [
+      { key: 'macAddress', label: 'MAC Address', mono: true },
+      { key: 'ipAddress', label: 'IP Address', mono: true },
+      { key: 'imei', label: 'IMEI', mono: true },
+      { key: 'telephoneNumber', label: 'Telephone', mono: true },
+      { key: 'wsusGroup', label: 'WSUS Group' },
+    ] },
+    { title: 'Lifecycle', fields: [
+      { key: 'supplier', label: 'Supplier', type: 'select', options: SUPPLIERS },
+      { key: 'poNumber', label: 'PO Number', mono: true },
+      { key: 'dateAcquired', label: 'Date Acquired', type: 'date' },
+      { key: 'dateDeployed', label: 'Date Deployed', type: 'date' },
+      { key: 'returnDate', label: 'Return Date', type: 'date' },
+      { key: 'dateRetired', label: 'Date Retired', type: 'date' },
+    ] },
+  ];
+
+  function chunkPairs(arr) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += 2) out.push(arr.slice(i, i + 2));
+    return out;
+  }
+
+  function renderDetailFieldInput(field, value) {
+    if (field.type === 'select') {
+      return `
+        <div class="form-group">
+          <div class="form-label">${escapeHtml(field.label)}</div>
+          <select class="form-select" data-bind="detailForm.${field.key}">
+            ${field.options.map((o) => `<option value="${escapeHtml(o)}" ${o === value ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+          </select>
+        </div>`;
+    }
+    if (field.type === 'date') {
+      return `
+        <div class="form-group">
+          <div class="form-label">${escapeHtml(field.label)}</div>
+          <input class="form-input mono" type="date" data-bind="detailForm.${field.key}" value="${escapeHtml(value)}">
+        </div>`;
+    }
+    return `
+      <div class="form-group">
+        <div class="form-label">${escapeHtml(field.label)}</div>
+        <input class="form-input${field.mono ? ' mono' : ''}" type="text" data-bind="detailForm.${field.key}" value="${escapeHtml(value)}" placeholder="—">
+      </div>`;
+  }
+
+  function renderDetailFieldGroup(group, f, isRetired) {
+    if (isRetired) {
+      return `
+        <div class="drawer-section">
+          <div class="drawer-section-title">${escapeHtml(group.title)}</div>
+          ${group.fields.map((field) => {
+            const raw = f[field.key];
+            const display = field.type === 'date' ? (raw ? formatDate(raw) : '—') : (raw || '—');
+            const valueHtml = (field.key === 'ipAddress' && raw)
+              ? `<a class="ip-link" href="http://${encodeURIComponent(raw)}" target="_blank" rel="noopener noreferrer">${escapeHtml(raw)}</a>`
+              : escapeHtml(display);
+            return `
+              <div class="drawer-field-row">
+                <div class="drawer-field-label">${escapeHtml(field.label)}</div>
+                <div class="drawer-field-value">${valueHtml}</div>
+              </div>`;
+          }).join('')}
+        </div>`;
+    }
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">${escapeHtml(group.title)}</div>
+        ${chunkPairs(group.fields).map((pair) => `<div class="form-row">${pair.map((field) => renderDetailFieldInput(field, f[field.key])).join('')}</div>`).join('')}
+      </div>`;
+  }
+
+  function renderAssignmentBlock(sel) {
+    const f = sel.detailForm;
     if (sel.isRetired) {
       return `
         <div class="drawer-section">
@@ -2034,7 +2112,7 @@
         <div class="drawer-section-title">Assignment</div>
         <div class="form-group">
           <div class="form-label">Assigned To</div>
-          <input class="form-input" type="text" list="assignee-names-list" data-bind="assignForm.assignedName" value="${escapeHtml(f.assignedName)}" placeholder="Type a name…">
+          <input class="form-input" type="text" list="assignee-names-list" data-bind="detailForm.assignedName" value="${escapeHtml(f.assignedName)}" placeholder="Type a name…">
           <datalist id="assignee-names-list">
             ${sel.assigneeNames.map((n) => `<option value="${escapeHtml(n)}"></option>`).join('')}
           </datalist>
@@ -2042,14 +2120,14 @@
         <div class="form-row">
           <div class="form-group">
             <div class="form-label">Location</div>
-            <select class="form-select" data-bind="assignForm.location">
+            <select class="form-select" data-bind="detailForm.location">
               ${LOCATIONS.map((l) => `<option value="${escapeHtml(l)}" ${l === f.location ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
             </select>
           </div>
           <div class="form-group">
             <div class="form-label">Company</div>
             ${sel.isAdmin ? `
-              <select class="form-select" data-bind="assignForm.company">
+              <select class="form-select" data-bind="detailForm.company">
                 <option value="" ${!f.company ? 'selected' : ''}>—</option>
                 ${COMPANIES.map((c) => `<option value="${escapeHtml(c)}" ${c === f.company ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
               </select>
@@ -2060,7 +2138,7 @@
           <div class="form-group">
             <div class="form-label">Device Blocked</div>
             ${sel.isAdmin ? `
-              <select class="form-select" data-bind="assignForm.deviceBlocked">
+              <select class="form-select" data-bind="detailForm.deviceBlocked">
                 <option value="no" ${!f.deviceBlocked ? 'selected' : ''}>No</option>
                 <option value="yes" ${f.deviceBlocked ? 'selected' : ''}>Yes</option>
               </select>
@@ -2068,22 +2146,19 @@
           </div>
           <div class="form-group">
             <div class="form-label">Agreement Signed</div>
-            <select class="form-select" data-bind="assignForm.agreementSigned">
+            <select class="form-select" data-bind="detailForm.agreementSigned">
               <option value="no" ${!f.agreementSigned ? 'selected' : ''}>No</option>
               <option value="yes" ${f.agreementSigned ? 'selected' : ''}>Yes</option>
             </select>
           </div>
         </div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn-submit" data-act="submitAssignment" data-id="${escapeHtml(sel.assetTag)}">Save Changes</button>
-          ${f.assignedName ? `<button class="btn-ghost" data-act="unassignAsset" data-id="${escapeHtml(sel.assetTag)}">Unassign</button>` : ''}
-        </div>
+        ${f.assignedName ? `<button class="btn-ghost" data-act="unassignAsset" data-id="${escapeHtml(sel.assetTag)}">Unassign</button>` : ''}
       </div>
     `;
   }
 
-  function renderNotesEditBlock(sel) {
-    const f = sel.notesForm;
+  function renderNotesBlock(sel) {
+    const f = sel.detailForm;
     if (sel.isRetired) {
       return `
         <div class="drawer-section">
@@ -2097,10 +2172,10 @@
       <div class="drawer-section">
         <div class="drawer-section-title">Notes</div>
         <div class="form-group">
-          <textarea class="form-input" rows="3" data-bind="notesForm.notes" placeholder="Anything worth noting about this asset…">${escapeHtml(f.notes)}</textarea>
+          <textarea class="form-input" rows="3" data-bind="detailForm.notes" placeholder="Anything worth noting about this asset…">${escapeHtml(f.notes)}</textarea>
         </div>
         ${sel.isAdmin ? `
-          <div class="form-row" style="align-items:flex-end;margin-bottom:14px;">
+          <div class="form-row" style="align-items:flex-end;">
             <div class="form-group" style="flex:0 0 auto;">
               <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;padding-bottom:9px;">
                 <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleCostTracked" ${f.costTracked ? 'checked' : ''}>
@@ -2108,21 +2183,21 @@
               </label>
             </div>
             <div class="form-group">
-              <input class="form-input mono" type="number" step="0.01" min="0" data-bind="notesForm.cost" value="${escapeHtml(f.cost)}" placeholder="0.00" ${f.costTracked ? '' : 'disabled'}>
+              <input class="form-input mono" type="number" step="0.01" min="0" data-bind="detailForm.cost" value="${escapeHtml(f.cost)}" placeholder="0.00" ${f.costTracked ? '' : 'disabled'}>
             </div>
           </div>
         ` : `
-          <div class="drawer-field-row" style="margin-bottom:14px;">
+          <div class="drawer-field-row">
             <div class="drawer-field-label">Cost</div>
             <div class="drawer-field-value">${f.costTracked && f.cost !== '' ? '£' + escapeHtml(f.cost) : '—'} <span class="cell-dim" style="font-size:11px;">(admin only)</span></div>
           </div>
         `}
-        <button class="btn-submit" data-act="submitNotes" data-id="${escapeHtml(sel.assetTag)}">Save Notes</button>
       </div>
     `;
   }
 
   function renderDrawer(sel) {
+    const f = sel.detailForm;
     return `
       <div class="overlay" data-act="closeDetail"></div>
       <div class="drawer" data-act="noop">
@@ -2133,20 +2208,11 @@
           <div class="drawer-close" data-act="closeDetail">×</div>
         </div>
         <div class="drawer-divider"></div>
-        ${sel.sections.map((sec) => `
-          <div class="drawer-section">
-            <div class="drawer-section-title">${escapeHtml(sec.title)}</div>
-            ${sec.fields.map((f) => `
-              <div class="drawer-field-row">
-                <div class="drawer-field-label">${escapeHtml(f.label)}</div>
-                <div class="drawer-field-value">${f.link ? `<a class="ip-link" href="${escapeHtml(f.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(f.value)}</a>` : escapeHtml(f.value)}</div>
-              </div>
-            `).join('')}
-          </div>
-        `).join('')}
-        ${renderAssignmentEditBlock(sel)}
-        ${renderNotesEditBlock(sel)}
+        ${DETAIL_FIELD_GROUPS.map((group) => renderDetailFieldGroup(group, f, sel.isRetired)).join('')}
+        ${renderAssignmentBlock(sel)}
+        ${renderNotesBlock(sel)}
         ${sel.isMobile ? renderSimAssignBlock(sel) : ''}
+        ${!sel.isRetired ? `<button class="btn-submit" style="width:100%;margin-bottom:18px;" data-act="submitDetail" data-id="${escapeHtml(sel.assetTag)}">Save Changes</button>` : ''}
         <div class="drawer-section-title">History</div>
         ${sel.history.map((h) => `
           <div class="history-row">

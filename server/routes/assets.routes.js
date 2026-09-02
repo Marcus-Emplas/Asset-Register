@@ -212,8 +212,66 @@ router.patch('/:id', (req, res) => {
   if (touchesAdminOnlyField && !isAdmin) return res.status(403).json({ error: 'forbidden' });
 
   const today = todayIso();
+  let currentTag = tag;
+
+  // Renaming changes the primary key, which asset_history and any SIM card
+  // assignment reference by value (no ON UPDATE CASCADE is declared on those
+  // FKs — adding one would need a table rebuild). Foreign key checks are
+  // dropped for just this one transaction so the three tables can be moved
+  // over together, then re-enabled immediately after.
+  if (body.assetTag !== undefined) {
+    const newTag = String(body.assetTag).trim();
+    if (!newTag) return res.status(400).json({ error: 'validation_failed', fields: { assetTag: 'Asset tag is required' } });
+    if (newTag !== currentTag) {
+      if (db.prepare('SELECT 1 FROM assets WHERE asset_tag = ?').get(newTag)) {
+        return res.status(400).json({ error: 'validation_failed', fields: { assetTag: 'Asset tag already exists' } });
+      }
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec('BEGIN');
+      try {
+        db.prepare('UPDATE assets SET asset_tag = ? WHERE asset_tag = ?').run(newTag, currentTag);
+        db.prepare('UPDATE asset_history SET asset_tag = ? WHERE asset_tag = ?').run(newTag, currentTag);
+        db.prepare('UPDATE sim_cards SET assigned_asset_tag = ? WHERE assigned_asset_tag = ?').run(newTag, currentTag);
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        db.exec('PRAGMA foreign_keys = ON');
+        throw e;
+      }
+      db.exec('PRAGMA foreign_keys = ON');
+      addHistory(newTag, today, `Asset tag changed from ${currentTag} to ${newTag}`);
+      currentTag = newTag;
+    }
+  }
+
   const updates = {};
   const historyLines = [];
+
+  if (body.itemType !== undefined) {
+    const itemType = String(body.itemType).trim();
+    if (!itemType) return res.status(400).json({ error: 'validation_failed', fields: { itemType: 'Required' } });
+    if (itemType !== existing.itemType) { updates.item_type = itemType; historyLines.push(`Item type changed to ${itemType}`); }
+  }
+  if (body.model !== undefined) {
+    const model = String(body.model).trim();
+    if (!model) return res.status(400).json({ error: 'validation_failed', fields: { model: 'Model is required' } });
+    if (model !== existing.model) { updates.model = model; historyLines.push(`Model changed to ${model}`); }
+  }
+  if (body.serialNumber !== undefined) updates.serial_number = String(body.serialNumber).trim();
+  if (body.expressTag !== undefined) updates.express_tag = String(body.expressTag).trim();
+  if (body.macAddress !== undefined) updates.mac_address = String(body.macAddress).trim();
+  if (body.ipAddress !== undefined) updates.ip_address = String(body.ipAddress).trim();
+  if (body.imei !== undefined) updates.imei = String(body.imei).trim();
+  if (body.telephoneNumber !== undefined) updates.telephone_number = String(body.telephoneNumber).trim();
+  if (body.wsusGroup !== undefined) updates.wsus_group = String(body.wsusGroup).trim();
+  if (body.supplier !== undefined) {
+    const supplier = String(body.supplier).trim();
+    if (supplier) updates.supplier = supplier;
+  }
+  if (body.poNumber !== undefined) updates.po_number = String(body.poNumber).trim();
+  if (body.dateAcquired !== undefined) updates.date_acquired = String(body.dateAcquired).trim();
+  if (body.returnDate !== undefined) updates.return_date = String(body.returnDate).trim();
+  if (body.dateRetired !== undefined) updates.date_retired = String(body.dateRetired).trim();
 
   if (body.firstName !== undefined || body.lastName !== undefined) {
     const firstName = (body.firstName !== undefined ? body.firstName : existing.firstName).trim();
@@ -235,6 +293,15 @@ router.patch('/:id', (req, res) => {
     } else if (hadAssignee && hasAssignee && (firstName !== existing.firstName || lastName !== existing.lastName)) {
       historyLines.push(`Reassigned to ${firstName} ${lastName}`);
     }
+  }
+
+  // Only apply an explicit Date Deployed edit if it actually differs from
+  // what was already stored — otherwise resubmitting the untouched form
+  // field would stomp the auto-set date_deployed from the assignment block
+  // above with the (still-old) value the drawer was opened with.
+  if (body.dateDeployed !== undefined) {
+    const dateDeployed = String(body.dateDeployed).trim();
+    if (dateDeployed !== existing.dateDeployed) updates.date_deployed = dateDeployed;
   }
 
   if (body.location !== undefined) {
@@ -286,11 +353,11 @@ router.patch('/:id', (req, res) => {
   if (Object.keys(updates).length > 0) {
     const setClauses = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
     db.prepare(`UPDATE assets SET ${setClauses}, updated_at = datetime('now') WHERE asset_tag = @assetTag`)
-      .run({ ...updates, assetTag: tag });
-    for (const line of historyLines) addHistory(tag, today, line);
+      .run({ ...updates, assetTag: currentTag });
+    for (const line of historyLines) addHistory(currentTag, today, line);
   }
 
-  res.json(fetchOneAsset(tag));
+  res.json(fetchOneAsset(currentTag));
 });
 
 router.post('/:id/check-in-out', (req, res) => {
