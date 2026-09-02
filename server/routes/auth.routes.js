@@ -193,6 +193,29 @@ router.post('/mfa/reset-self', requireAuth, mfaLimiter, async (req, res, next) =
   }
 });
 
+// Which tables' column layout can be customized, and a sane cap on how many
+// columns / how long a column key can be — just enough to keep the stored
+// JSON small and well-formed. The client ignores any key it doesn't
+// recognize, so there's no need to whitelist exact field names here.
+const COLUMN_PREF_TABLES = ['assets', 'deprecated', 'users', 'simCards'];
+
+router.patch('/column-prefs', requireAuth, (req, res) => {
+  const input = (req.body && req.body.columnPrefs) || {};
+  if (typeof input !== 'object' || Array.isArray(input)) return res.status(400).json({ error: 'validation_failed' });
+
+  const clean = {};
+  for (const table of COLUMN_PREF_TABLES) {
+    if (Array.isArray(input[table])) {
+      clean[table] = input[table]
+        .filter((k) => typeof k === 'string' && k.length <= 40)
+        .slice(0, 40);
+    }
+  }
+
+  db.prepare('UPDATE users SET column_prefs = ? WHERE id = ?').run(JSON.stringify(clean), req.user.id);
+  res.json({ columnPrefs: clean });
+});
+
 router.post('/logout', (req, res, next) => {
   if (!req.session) return res.json({ status: 'ok' });
   req.session.destroy((err) => {

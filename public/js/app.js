@@ -20,6 +20,130 @@
     return opt ? opt.label : value;
   }
 
+  function fmtDateTime(v) { return v ? formatDate(String(v).slice(0, 10)) : '—'; }
+  function fmtBool(v) { return v ? 'Yes' : 'No'; }
+
+  // Every column a table CAN show. `defaultColumns` on the table entry below
+  // controls which of these are visible until the user customizes it via the
+  // column picker (state persisted server-side, see saveColumnPrefs).
+  const ASSET_COLUMN_DEFS = [
+    { key: 'assetTag', label: 'TAG', width: 120, sortAct: 'sortTag', render: (r) => `<div class="cell-mono">${escapeHtml(r.assetTag)}</div>` },
+    { key: 'itemType', label: 'TYPE', width: 100, render: (r) => `<div class="cell-dim">${escapeHtml(r.itemType)}</div>` },
+    { key: 'model', label: 'MODEL', width: 240, render: (r) => `<div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(r.model)}</div>` },
+    { key: 'assignedTo', label: 'ASSIGNED TO', width: 150, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.assigneeName)}</div>` },
+    { key: 'location', label: 'LOCATION', width: 130, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.location)}</div>` },
+    { key: 'company', label: 'COMPANY', width: 120, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.company || '—')}</div>` },
+    { key: 'ipAddress', label: 'IP ADDRESS', width: 130, render: (r) => `<div class="cell-mono cell-ellipsis">${r.ipAddress ? `<a class="ip-link" href="http://${encodeURIComponent(r.ipAddress)}" target="_blank" rel="noopener noreferrer" data-act="noop">${escapeHtml(r.ipAddress)}</a>` : '<span class="cell-dim">—</span>'}</div>` },
+    { key: 'status', label: 'STATUS', width: 110, sortAct: 'sortStatus', render: (r) => `<div><span class="status-pill" style="background:${r.statusBg};color:${r.statusColor};">${escapeHtml(r.status)}</span></div>` },
+    { key: 'dateDeployed', label: 'DEPLOYED', width: 100, sortAct: 'sortDeployed', render: (r) => `<div class="cell-deployed">${escapeHtml(r.deployedStr)}</div>` },
+    { key: 'serialNumber', label: 'SERIAL', width: 130, render: (r) => `<div class="cell-mono cell-ellipsis">${escapeHtml(r.serialNumber || '—')}</div>` },
+    { key: 'expressTag', label: 'EXPRESS TAG', width: 120, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.expressTag || '—')}</div>` },
+    { key: 'macAddress', label: 'MAC ADDRESS', width: 150, render: (r) => `<div class="cell-mono cell-ellipsis">${escapeHtml(r.macAddress || '—')}</div>` },
+    { key: 'imei', label: 'IMEI', width: 140, render: (r) => `<div class="cell-mono cell-ellipsis">${escapeHtml(r.imei || '—')}</div>` },
+    { key: 'wsusGroup', label: 'WSUS GROUP', width: 140, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.wsusGroup || '—')}</div>` },
+    { key: 'telephoneNumber', label: 'TELEPHONE', width: 130, render: (r) => `<div class="cell-mono cell-ellipsis">${escapeHtml(r.telephoneNumber || '—')}</div>` },
+    { key: 'poNumber', label: 'PO NUMBER', width: 120, render: (r) => `<div class="cell-mono cell-ellipsis">${escapeHtml(r.poNumber || '—')}</div>` },
+    { key: 'deviceBlocked', label: 'BLOCKED', width: 90, render: (r) => `<div class="cell-dim">${fmtBool(r.deviceBlocked)}</div>` },
+    { key: 'dateAcquired', label: 'ACQUIRED', width: 100, render: (r) => `<div class="cell-deployed">${fmtDateTime(r.dateAcquired)}</div>` },
+    { key: 'returnDate', label: 'RETURN DATE', width: 110, render: (r) => `<div class="cell-deployed">${fmtDateTime(r.returnDate)}</div>` },
+    { key: 'dateRetired', label: 'RETIRED', width: 100, render: (r) => `<div class="cell-deployed">${fmtDateTime(r.dateRetired)}</div>` },
+    { key: 'notes', label: 'NOTES', width: 200, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.notes || '—')}</div>` },
+    { key: 'agreementSigned', label: 'AGREEMENT', width: 100, render: (r) => `<div class="cell-dim">${fmtBool(r.agreementSigned)}</div>` },
+    { key: 'supplier', label: 'SUPPLIER', width: 110, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.supplier || '—')}</div>` },
+    { key: 'cost', label: 'COST', width: 90, render: (r) => `<div class="cell-mono">${r.costTracked && r.cost !== null && r.cost !== undefined && r.cost !== '' ? '£' + escapeHtml(r.cost) : '—'}</div>` },
+  ];
+  const USER_COLUMN_DEFS = [
+    { key: 'email', label: 'EMAIL', width: 260, render: (u) => `<div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(u.email)}</div>` },
+    { key: 'role', label: 'ROLE', width: 130, render: (u) => `<div><select class="form-select" data-bind="userRole.${u.id}" style="padding:5px 8px;font-size:12px;"><option value="standard" ${u.role === 'standard' ? 'selected' : ''}>Standard</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select></div>` },
+    { key: 'mfaEnabled', label: 'MFA', width: 120, render: (u) => `<div class="cell-dim">${u.mfaEnabled ? 'Enrolled' : 'Not enrolled'}</div>` },
+    { key: 'active', label: 'STATUS', width: 100, render: (u) => `<div><span class="status-pill" style="background:${u.active ? 'rgba(52,226,160,0.14)' : 'rgba(242,99,91,0.14)'};color:${u.active ? '#34E2A0' : '#F2635B'};">${u.active ? 'Active' : 'Disabled'}</span></div>` },
+    { key: 'createdAt', label: 'CREATED', width: 110, render: (u) => `<div class="cell-deployed">${fmtDateTime(u.createdAt)}</div>` },
+  ];
+  const SIMCARD_COLUMN_DEFS = [
+    { key: 'phoneNumber', label: 'NUMBER', width: 140, render: (sc) => `<div class="cell-mono" style="color:#E8EDF3;">${escapeHtml(sc.phoneNumber)}</div>` },
+    { key: 'carrier', label: 'CARRIER', width: 110, render: (sc) => `<div class="cell-dim">${escapeHtml(sc.carrier || '—')}</div>` },
+    { key: 'plan', label: 'PLAN', width: 140, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.plan || '—')}</div>` },
+    { key: 'assignedAssetTag', label: 'ASSIGNED TO', width: 200, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.assignedLabel)}</div>` },
+    { key: 'status', label: 'STATUS', width: 110, render: (sc) => `<div><span class="status-pill" style="background:${tint(SIM_STATUS_COLORS[sc.status])};color:${SIM_STATUS_COLORS[sc.status]};">${escapeHtml(sc.status)}</span></div>` },
+    { key: 'iccid', label: 'ICCID', width: 150, render: (sc) => `<div class="cell-mono cell-ellipsis">${escapeHtml(sc.iccid || '—')}</div>` },
+    { key: 'notes', label: 'NOTES', width: 180, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.notes || '—')}</div>` },
+    { key: 'createdAt', label: 'CREATED', width: 110, render: (sc) => `<div class="cell-deployed">${fmtDateTime(sc.createdAt)}</div>` },
+  ];
+
+  const COLUMN_TABLES = {
+    assets: { defs: ASSET_COLUMN_DEFS, defaultColumns: ['assetTag', 'itemType', 'model', 'assignedTo', 'location', 'company', 'ipAddress', 'status', 'dateDeployed'] },
+    deprecated: { defs: ASSET_COLUMN_DEFS, defaultColumns: ['assetTag', 'itemType', 'model', 'location', 'dateRetired'] },
+    users: { defs: USER_COLUMN_DEFS, defaultColumns: ['email', 'role', 'mfaEnabled', 'active'] },
+    simCards: { defs: SIMCARD_COLUMN_DEFS, defaultColumns: ['phoneNumber', 'carrier', 'plan', 'assignedAssetTag', 'status'] },
+  };
+  const COLUMN_MIN_WIDTH = 60;
+  const COLUMN_WIDTHS_KEY = 'assetHub.columnWidths';
+  // Fixed, non-toggleable columns (checkbox / row actions) that flank the
+  // toggleable ones — their width isn't part of columnWidths, just baked in
+  // here so both the render pass and the drag handler build the same --cols.
+  const COLUMN_PINNED = {
+    assets: { left: 32 },
+    users: { right: 260 },
+    simCards: { right: 260 },
+  };
+
+  // Which columns are visible, and in what order, for a table — always the
+  // defs' own pool order (no drag-reordering), filtered down to whatever the
+  // user has chosen (falling back to the table's defaults). Filtering against
+  // `defs` also silently drops any stale/unknown keys from old prefs.
+  function resolveVisibleColumns(tableKey, columnPrefs) {
+    const { defs, defaultColumns } = COLUMN_TABLES[tableKey];
+    const saved = columnPrefs && Array.isArray(columnPrefs[tableKey]) ? columnPrefs[tableKey] : null;
+    const set = new Set(saved && saved.length ? saved : defaultColumns);
+    return defs.filter((d) => set.has(d.key)).map((d) => d.key);
+  }
+
+  function loadColumnWidths() {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY) || '{}'); } catch (e) { saved = {}; }
+    const widths = {};
+    for (const tableKey in COLUMN_TABLES) {
+      const s = saved[tableKey] && typeof saved[tableKey] === 'object' ? saved[tableKey] : {};
+      const table = {};
+      COLUMN_TABLES[tableKey].defs.forEach((d) => { table[d.key] = typeof s[d.key] === 'number' ? s[d.key] : d.width; });
+      widths[tableKey] = table;
+    }
+    return widths;
+  }
+  function saveColumnWidths(widths) {
+    try { localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(widths)); } catch (e) { /* ignore */ }
+  }
+  // Builds the --cols value for a table: any pinned (non-toggleable) leading
+  // column width, then one width per visible column in order, then any
+  // pinned trailing column width.
+  function colsVar(widths, visibleKeys, pinnedLeft, pinnedRight) {
+    const parts = [];
+    if (pinnedLeft) parts.push(`${pinnedLeft}px`);
+    visibleKeys.forEach((k) => parts.push(`${widths[k] || 100}px`));
+    if (pinnedRight) parts.push(`${pinnedRight}px`);
+    return parts.join(' ');
+  }
+  function resizeHandle(tableKey, key) {
+    return `<div class="col-resize-handle" data-resize-table="${tableKey}" data-resize-key="${key}"></div>`;
+  }
+  // Renders the toggleable header cells for a table. `arrowFn(def)` supplies
+  // the sort arrow text for sortable columns; `noHandleOnLast` suppresses the
+  // handle on the last visible column when nothing (no pinned column) follows it.
+  function renderColumnHeaders(tableKey, visibleKeys, defsByKey, arrowFn, noHandleOnLast) {
+    return visibleKeys.map((key, i) => {
+      const def = defsByKey[key];
+      const isLast = noHandleOnLast && i === visibleKeys.length - 1;
+      const sortAttr = def.sortAct ? ` class="sortable" data-act="${def.sortAct}"` : '';
+      const arrowText = arrowFn ? arrowFn(def) : '';
+      return `<div${sortAttr}>${escapeHtml(def.label)}${arrowText}${isLast ? '' : resizeHandle(tableKey, key)}</div>`;
+    }).join('');
+  }
+  function defsByKeyOf(tableKey) {
+    const map = {};
+    COLUMN_TABLES[tableKey].defs.forEach((d) => { map[d.key] = d; });
+    return map;
+  }
+
   class App {
     constructor() {
       this.state = {
@@ -41,6 +165,8 @@
         mfaEnroll: { qr: '', manualKey: '' },
         selectedIds: [],
         deprecatedPage: 1,
+        columnWidths: loadColumnWidths(),
+        columnPrefs: {}, columnPickerTable: null,
         csvImport: { open: false, step: 'pick', fileName: '', rows: [] },
         users: [], userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
         accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
@@ -57,7 +183,7 @@
       };
       try {
         const me = await Api.get('/api/me');
-        this.setState({ currentUser: me });
+        this.setState({ currentUser: me, columnPrefs: me.columnPrefs || {} });
         await this.loadAssets();
         await this.loadSimCards();
         await this.loadCustomReports();
@@ -244,6 +370,56 @@
         authForm: { email: '', password: '' }, mfaForm: { token: '' }, authError: '', mfaError: '',
       });
       await this.loadAssets();
+      await this.loadColumnPrefs();
+    }
+
+    async loadColumnPrefs() {
+      try {
+        const me = await Api.get('/api/me');
+        this.setState({ columnPrefs: me.columnPrefs || {} });
+      } catch (e) { /* non-fatal — falls back to each table's default columns */ }
+    }
+
+    // Checking/unchecking a column mutates state and patches just the picker's
+    // own checkboxes directly, without a setState/render — the table underneath
+    // is covered by the modal anyway, so it only needs to catch up once the
+    // picker closes. A full render per checkbox would rebuild the whole picker
+    // list mid-click, which is exactly what made an automated click double-fire
+    // during testing (the DOM node it just clicked got replaced out from under it).
+    toggleColumn(tableKey, key, checked) {
+      const current = resolveVisibleColumns(tableKey, this.state.columnPrefs);
+      let next;
+      if (checked) next = current.includes(key) ? current : [...current, key];
+      else {
+        next = current.filter((k) => k !== key);
+        if (next.length === 0) return; // never allow hiding every column
+      }
+      this.state.columnPrefs = { ...this.state.columnPrefs, [tableKey]: next };
+      this.saveColumnPrefs(this.state.columnPrefs);
+      this._syncColumnCheckboxes(tableKey, next);
+    }
+
+    resetColumns(tableKey) {
+      const defaults = [...COLUMN_TABLES[tableKey].defaultColumns];
+      this.state.columnPrefs = { ...this.state.columnPrefs, [tableKey]: defaults };
+      this.saveColumnPrefs(this.state.columnPrefs);
+      const defaultSet = new Set(defaults);
+      root.querySelectorAll(`[data-act="toggleColumn"][data-table="${tableKey}"]`).forEach((cb) => {
+        cb.checked = defaultSet.has(cb.dataset.key);
+      });
+      this._syncColumnCheckboxes(tableKey, defaults);
+    }
+
+    _syncColumnCheckboxes(tableKey, visibleKeys) {
+      const soleKey = visibleKeys.length === 1 ? visibleKeys[0] : null;
+      root.querySelectorAll(`[data-act="toggleColumn"][data-table="${tableKey}"]`).forEach((cb) => {
+        cb.disabled = cb.dataset.key === soleKey;
+      });
+    }
+
+    async saveColumnPrefs(columnPrefs) {
+      try { await Api.patch('/api/auth/column-prefs', { columnPrefs }); }
+      catch (e) { this.showToast('Failed to save column preferences'); }
     }
 
     backToAuth() {
@@ -266,7 +442,13 @@
       this.setState((s) => ({ assets: s.assets.map((a) => (a.id === updated.id ? updated : a)) }));
     }
 
-    updateAssignField(field, value) { this.setState((s) => ({ assignForm: { ...s.assignForm, [field]: value } })); }
+    updateAssignField(field, value) {
+      // Mutate state directly instead of a full setState/render — the
+      // <select> already shows the chosen option natively, and nothing else
+      // on screen depends on this value until Save is pressed, so rebuilding
+      // the whole drawer here would only cost scroll position for no benefit.
+      this.state.assignForm[field] = value;
+    }
 
     async submitAssignment(assetTag) {
       const f = this.state.assignForm;
@@ -809,9 +991,8 @@
       const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
       const rows = pageRows.map((asset) => ({
-        id: asset.id, assetTag: asset.assetTag, itemType: asset.itemType, model: asset.model,
+        ...asset,
         assigneeName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '—',
-        location: asset.location, company: asset.company, ipAddress: asset.ipAddress, status: asset.status,
         statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
         deployedStr: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—',
         selected: st.selectedIds.includes(asset.id),
@@ -866,8 +1047,10 @@
       const deprecatedRows = deprecatedAssets
         .slice((deprecatedPage - 1) * PAGE_SIZE, deprecatedPage * PAGE_SIZE)
         .map((asset) => ({
-          id: asset.id, assetTag: asset.assetTag, itemType: asset.itemType, model: asset.model,
-          location: asset.location, dateRetiredStr: asset.dateRetired ? formatDate(asset.dateRetired) : '—',
+          ...asset,
+          assigneeName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '—',
+          statusColor: STATUS_COLORS[asset.status] || '#8792A2', statusBg: tint(STATUS_COLORS[asset.status]),
+          deployedStr: asset.dateDeployed ? formatDate(asset.dateDeployed) : '—',
         }));
 
       return {
@@ -876,6 +1059,9 @@
         currentUserLabel: st.currentUser ? st.currentUser.email.slice(0, 2).toUpperCase() : '',
         isAdmin: !!(st.currentUser && st.currentUser.role === 'admin'),
         screen: st.screen,
+        columnWidths: st.columnWidths,
+        columnPrefs: st.columnPrefs,
+        columnPickerTable: st.columnPickerTable,
         kpis, typeBars, locationBars, supplierBars, donutSegs,
         donutTotal: summary.total.toLocaleString(),
         attention,
@@ -1013,11 +1199,54 @@
       }
     }
 
+    // Dragging a column-resize handle patches the DOM directly (via the
+    // --cols custom property on the table's wrapper) instead of going
+    // through setState/render on every mousemove — a full-page rebuild per
+    // pixel of drag would be janky and would blow away scroll position.
+    // The width is only committed to state (and localStorage) on mouseup;
+    // the next render anywhere else in the app will already read the
+    // updated width from state.
+    _startColumnResize(handle, startEvent) {
+      startEvent.preventDefault();
+      const tableKey = handle.getAttribute('data-resize-table');
+      const key = handle.getAttribute('data-resize-key');
+      const widths = this.state.columnWidths[tableKey];
+      const container = root.querySelector(`[data-cols-root="${tableKey}"]`);
+      if (!widths || !container) return;
+      const visibleKeys = resolveVisibleColumns(tableKey, this.state.columnPrefs);
+      const pinned = COLUMN_PINNED[tableKey] || {};
+      const startX = startEvent.clientX;
+      const startWidth = widths[key];
+      handle.classList.add('resizing');
+      const onMove = (e) => {
+        const newWidth = Math.max(COLUMN_MIN_WIDTH, Math.round(startWidth + (e.clientX - startX)));
+        widths[key] = newWidth;
+        container.style.setProperty('--cols', colsVar(widths, visibleKeys, pinned.left, pinned.right));
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        handle.classList.remove('resizing');
+        saveColumnWidths(this.state.columnWidths);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
     _bindEvents() {
       const fileInput = document.getElementById('csvFileInput');
       if (fileInput) fileInput.onchange = (e) => this.handleCsvFile(e.target.files[0]);
 
+      root.onmousedown = (e) => {
+        const handle = e.target.closest('.col-resize-handle');
+        if (handle) this._startColumnResize(handle, e);
+      };
+
       root.onclick = (e) => {
+        // A resize drag ends with a mouseup on the handle, which the browser
+        // follows with a click — ignore it so resizing a sortable column
+        // (e.g. TAG, STATUS) doesn't also trigger a sort.
+        if (e.target.closest('.col-resize-handle')) return;
         const el = e.target.closest('[data-act]');
         if (!el) return;
         const act = el.getAttribute('data-act');
@@ -1036,6 +1265,10 @@
           case 'deleteCustomReport': this.deleteCustomReport(id); break;
           case 'openExportPicker': this.openExportPicker(); break;
           case 'closeExportPicker': this.closeExportPicker(); break;
+          case 'openColumnPicker': this.setState({ columnPickerTable: el.getAttribute('data-table') }); break;
+          case 'closeColumnPicker': this.setState({ columnPickerTable: null }); break;
+          case 'toggleColumn': this.toggleColumn(el.getAttribute('data-table'), el.getAttribute('data-key'), el.checked); break;
+          case 'resetColumns': this.resetColumns(el.getAttribute('data-table')); break;
           case 'exportStandard': this.exportCsv(); this.setState({ exportPickerOpen: false }); break;
           case 'exportNamedReport': {
             const report = this.state.customReports.find((r) => r.id === Number(id));
@@ -1285,6 +1518,7 @@
           ${vm.csvImport.open ? renderImportModal(vm.csvImport) : ''}
           ${vm.newReportOpen ? renderNewReportModal(vm) : ''}
           ${vm.exportPickerOpen ? renderExportPickerModal(vm) : ''}
+          ${vm.columnPickerTable ? renderColumnPickerModal(vm) : ''}
         </div>
       </div>
       ${vm.toast ? `<div class="toast">${escapeHtml(vm.toast.msg)}</div>` : ''}
@@ -1454,6 +1688,9 @@
 
   function renderAssets(vm) {
     const arrow = (col) => vm.sortCol === col ? (vm.sortDir === 'asc' ? '▲' : '▼') : '';
+    const cols = resolveVisibleColumns('assets', vm.columnPrefs);
+    const defsByKey = defsByKeyOf('assets');
+    const arrowFn = (def) => def.sortAct === 'sortTag' ? ` ${arrow('assetTag')}` : def.sortAct === 'sortStatus' ? ` ${arrow('status')}` : def.sortAct === 'sortDeployed' ? ` ${arrow('dateDeployed')}` : '';
     return `
       <div class="assets-layout">
         <div class="filters-panel">
@@ -1474,42 +1711,29 @@
           </select>
         </div>
 
-        <div class="table-col">
+        <div class="table-col" data-cols-root="assets" style="--cols:${colsVar(vm.columnWidths.assets, cols, 32, null)};">
           ${vm.selectedCount > 0 ? renderBulkToolbar(vm) : `
             <div class="table-toolbar">
               <div class="table-count">Showing <span class="num">${vm.rangeStart}–${vm.rangeEnd}</span> of <span class="num">${vm.resultCount}</span></div>
               <div class="spacer"></div>
+              <button class="btn-ghost" data-act="openColumnPicker" data-table="assets">Columns</button>
               ${vm.isAdmin ? `<button class="btn-ghost" data-act="openImport">Import CSV</button>` : ''}
               <button class="btn-ghost" data-act="exportCsv">Export CSV</button>
             </div>
           `}
+          <div class="table-scroll">
           <div class="table-header">
             <div class="cell-check"><input type="checkbox" data-act="toggleSelectAll" ${vm.allPageSelected ? 'checked' : ''}></div>
-            <div class="sortable" data-act="sortTag">TAG ${arrow('assetTag')}</div>
-            <div>TYPE</div>
-            <div>MODEL</div>
-            <div>ASSIGNED TO</div>
-            <div>LOCATION</div>
-            <div>COMPANY</div>
-            <div>IP ADDRESS</div>
-            <div class="sortable" data-act="sortStatus">STATUS ${arrow('status')}</div>
-            <div class="sortable" data-act="sortDeployed">DEPLOYED ${arrow('dateDeployed')}</div>
+            ${renderColumnHeaders('assets', cols, defsByKey, arrowFn, true)}
           </div>
           <div class="table-body">
             ${vm.rows.map((row) => `
               <div class="table-row" data-act="openDetail" data-id="${escapeHtml(row.id)}">
                 <div class="cell-check"><input type="checkbox" data-act="toggleSelectRow" data-id="${escapeHtml(row.id)}" ${row.selected ? 'checked' : ''}></div>
-                <div class="cell-mono">${escapeHtml(row.assetTag)}</div>
-                <div class="cell-dim">${escapeHtml(row.itemType)}</div>
-                <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(row.model)}</div>
-                <div class="cell-dim cell-ellipsis">${escapeHtml(row.assigneeName)}</div>
-                <div class="cell-dim cell-ellipsis">${escapeHtml(row.location)}</div>
-                <div class="cell-dim cell-ellipsis">${escapeHtml(row.company || '—')}</div>
-                <div class="cell-mono cell-ellipsis">${row.ipAddress ? `<a class="ip-link" href="http://${encodeURIComponent(row.ipAddress)}" target="_blank" rel="noopener noreferrer" data-act="noop">${escapeHtml(row.ipAddress)}</a>` : '<span class="cell-dim">—</span>'}</div>
-                <div><span class="status-pill" style="background:${row.statusBg};color:${row.statusColor};">${escapeHtml(row.status)}</span></div>
-                <div class="cell-deployed">${escapeHtml(row.deployedStr)}</div>
+                ${cols.map((key) => defsByKey[key].render(row)).join('')}
               </div>
             `).join('')}
+          </div>
           </div>
           <div class="pagination-bar">
             <div class="page-info">Page ${vm.page} of ${vm.totalPages}</div>
@@ -1660,13 +1884,41 @@
     `;
   }
 
+  function renderColumnPickerModal(vm) {
+    const tableKey = vm.columnPickerTable;
+    const { defs } = COLUMN_TABLES[tableKey];
+    const visible = new Set(resolveVisibleColumns(tableKey, vm.columnPrefs));
+    return `
+      <div class="modal-overlay" data-act="closeColumnPicker">
+        <div class="modal-box" style="max-width:380px;" data-act="noop">
+          <div class="modal-header">
+            <div class="modal-title">Columns</div>
+            <div class="modal-close" data-act="closeColumnPicker">×</div>
+          </div>
+          <div class="account-hint">Choose which columns to show. Saved to your account.</div>
+          <div style="max-height:360px;overflow-y:auto;margin-bottom:14px;">
+            ${defs.map((d) => `
+              <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12.5px;color:var(--text-dim);cursor:pointer;">
+                <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleColumn" data-table="${tableKey}" data-key="${d.key}" ${visible.has(d.key) ? 'checked' : ''} ${visible.has(d.key) && visible.size === 1 ? 'disabled' : ''}>
+                ${escapeHtml(d.label)}
+              </label>
+            `).join('')}
+          </div>
+          <button class="btn-ghost" data-act="resetColumns" data-table="${tableKey}">Reset to Default</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderDeprecated(vm) {
-    const cols = '118px 96px 1fr 140px 128px';
+    const depCols = resolveVisibleColumns('deprecated', vm.columnPrefs);
+    const depDefsByKey = defsByKeyOf('deprecated');
     return `
       <div class="screen-scroll">
         <div class="page-header-row">
           <div class="page-title" style="margin-bottom:0;">Deprecated Assets</div>
           <div class="spacer"></div>
+          <button class="btn-ghost" data-act="openColumnPicker" data-table="deprecated">Columns</button>
           <button class="btn-primary" data-act="exportDeprecatedCsv">Export CSV</button>
         </div>
         <div class="kpi-row">
@@ -1694,19 +1946,17 @@
         </div>
         <div class="panel" style="padding:0;">
           <div class="panel-title" style="padding:16px 20px 0;">Deprecated Register</div>
-          <div class="table-header" style="grid-template-columns:${cols};margin-top:8px;">
-            <div>TAG</div><div>TYPE</div><div>MODEL</div><div>LOCATION</div><div>RETIRED</div>
+          <div class="table-scroll" data-cols-root="deprecated" style="--cols:${colsVar(vm.columnWidths.deprecated, depCols, null, null)};">
+          <div class="table-header" style="margin-top:8px;">
+            ${renderColumnHeaders('deprecated', depCols, depDefsByKey, null, true)}
           </div>
           <div class="table-body">
             ${vm.deprecatedRows.map((row) => `
-              <div class="table-row" style="grid-template-columns:${cols};" data-act="openDetail" data-id="${escapeHtml(row.id)}">
-                <div class="cell-mono">${escapeHtml(row.assetTag)}</div>
-                <div class="cell-dim">${escapeHtml(row.itemType)}</div>
-                <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(row.model)}</div>
-                <div class="cell-dim cell-ellipsis">${escapeHtml(row.location)}</div>
-                <div class="cell-deployed">${escapeHtml(row.dateRetiredStr)}</div>
+              <div class="table-row" data-act="openDetail" data-id="${escapeHtml(row.id)}">
+                ${depCols.map((key) => depDefsByKey[key].render(row)).join('')}
               </div>
             `).join('')}
+          </div>
           </div>
           <div class="pagination-bar">
             <div class="page-info">Page ${vm.deprecatedPage} of ${vm.deprecatedTotalPages}</div>
@@ -1990,25 +2240,29 @@
   }
 
   function renderSimCards(vm) {
-    const simCols = '140px 110px 140px 1fr 110px 1.6fr';
+    const simCols = resolveVisibleColumns('simCards', vm.columnPrefs);
+    const simDefsByKey = defsByKeyOf('simCards');
+    const simRows = vm.simCards.map((sc) => {
+      const assignedAsset = sc.assignedAssetTag ? vm.assignableMobiles.find((a) => a.assetTag === sc.assignedAssetTag) : null;
+      return { ...sc, assignedLabel: sc.assignedAssetTag ? `${sc.assignedAssetTag}${assignedAsset && assignedAsset.firstName ? ' — ' + assignedAsset.firstName + ' ' + assignedAsset.lastName : ''}` : '—' };
+    });
     return `
       <div class="screen-scroll">
         <div class="page-title">SIM Cards</div>
         <div class="panel">
-          <div class="panel-title">SIM Inventory</div>
-          <div class="users-row users-header" style="grid-template-columns:${simCols};">
-            <div>NUMBER</div><div>CARRIER</div><div>PLAN</div><div>ASSIGNED TO</div><div>STATUS</div><div></div>
+          <div class="page-header-row" style="margin-bottom:14px;">
+            <div class="panel-title" style="margin-bottom:0;">SIM Inventory</div>
+            <div class="spacer"></div>
+            <button class="btn-ghost" data-act="openColumnPicker" data-table="simCards">Columns</button>
           </div>
-          ${vm.simCards.map((sc) => {
-            const assignedAsset = sc.assignedAssetTag ? vm.assignableMobiles.find((a) => a.assetTag === sc.assignedAssetTag) : null;
-            const assignedLabel = sc.assignedAssetTag ? `${sc.assignedAssetTag}${assignedAsset && assignedAsset.firstName ? ' — ' + assignedAsset.firstName + ' ' + assignedAsset.lastName : ''}` : '—';
-            return `
-            <div class="users-row" style="grid-template-columns:${simCols};">
-              <div class="cell-mono" style="color:#E8EDF3;">${escapeHtml(sc.phoneNumber)}</div>
-              <div class="cell-dim">${escapeHtml(sc.carrier || '—')}</div>
-              <div class="cell-dim cell-ellipsis">${escapeHtml(sc.plan || '—')}</div>
-              <div class="cell-dim cell-ellipsis">${escapeHtml(assignedLabel)}</div>
-              <div><span class="status-pill" style="background:${tint(SIM_STATUS_COLORS[sc.status])};color:${SIM_STATUS_COLORS[sc.status]};">${escapeHtml(sc.status)}</span></div>
+          <div class="table-scroll" data-cols-root="simCards" style="--cols:${colsVar(vm.columnWidths.simCards, simCols, null, 260)};">
+          <div class="users-row users-header">
+            ${renderColumnHeaders('simCards', simCols, simDefsByKey, null, false)}
+            <div></div>
+          </div>
+          ${simRows.map((sc) => `
+            <div class="users-row">
+              ${simCols.map((key) => simDefsByKey[key].render(sc)).join('')}
               <div class="users-row-actions">
                 ${sc.status === 'Available' ? `
                   <select class="form-select" style="padding:5px 8px;font-size:12px;max-width:180px;" data-bind="assignSimRow.${sc.id}">
@@ -2022,8 +2276,9 @@
                 ${sc.status !== 'Assigned' && vm.isAdmin ? `<button class="btn-ghost users-row-btn" style="border-color:#F2635B;color:#F2635B;" data-act="deleteSim" data-id="${sc.id}">Delete</button>` : ''}
               </div>
             </div>
-          `; }).join('')}
+          `).join('')}
           ${vm.simCards.length === 0 ? `<div class="users-row"><div class="cell-dim">No SIM cards yet.</div></div>` : ''}
+          </div>
         </div>
 
         ${vm.isAdmin ? `
@@ -2056,27 +2311,25 @@
   }
 
   function renderUsers(vm) {
+    const userCols = resolveVisibleColumns('users', vm.columnPrefs);
+    const userDefsByKey = defsByKeyOf('users');
     return `
       <div class="screen-scroll">
         <div class="page-title">User Management</div>
         <div class="panel">
-          <div class="panel-title">Users</div>
+          <div class="page-header-row" style="margin-bottom:14px;">
+            <div class="panel-title" style="margin-bottom:0;">Users</div>
+            <div class="spacer"></div>
+            <button class="btn-ghost" data-act="openColumnPicker" data-table="users">Columns</button>
+          </div>
+          <div class="table-scroll" data-cols-root="users" style="--cols:${colsVar(vm.columnWidths.users, userCols, null, 260)};">
           <div class="users-row users-header">
-            <div>EMAIL</div><div>ROLE</div><div>MFA</div><div>STATUS</div><div></div>
+            ${renderColumnHeaders('users', userCols, userDefsByKey, null, false)}
+            <div></div>
           </div>
           ${vm.users.map((u) => `
             <div class="users-row">
-              <div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(u.email)}</div>
-              <div>
-                <select class="form-select" data-bind="userRole.${u.id}" style="padding:5px 8px;font-size:12px;">
-                  <option value="standard" ${u.role === 'standard' ? 'selected' : ''}>Standard</option>
-                  <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
-                </select>
-              </div>
-              <div class="cell-dim">${u.mfaEnabled ? 'Enrolled' : 'Not enrolled'}</div>
-              <div>
-                <span class="status-pill" style="background:${u.active ? 'rgba(52,226,160,0.14)' : 'rgba(242,99,91,0.14)'};color:${u.active ? '#34E2A0' : '#F2635B'};">${u.active ? 'Active' : 'Disabled'}</span>
-              </div>
+              ${userCols.map((key) => userDefsByKey[key].render(u)).join('')}
               <div class="users-row-actions">
                 <button class="btn-ghost users-row-btn" data-act="toggleUserActive" data-id="${u.id}">${u.active ? 'Disable' : 'Enable'}</button>
                 <button class="btn-ghost users-row-btn" data-act="resetUserMfa" data-id="${u.id}">Reset MFA</button>
@@ -2085,6 +2338,7 @@
             </div>
           `).join('')}
           ${vm.users.length === 0 ? `<div class="users-row"><div class="cell-dim">No users yet.</div></div>` : ''}
+          </div>
         </div>
 
         <div class="panel" style="max-width:480px;">

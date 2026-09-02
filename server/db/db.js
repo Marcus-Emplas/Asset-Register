@@ -22,6 +22,11 @@ db.exec('PRAGMA foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userColumns.includes('column_prefs')) {
+  db.exec('ALTER TABLE users ADD COLUMN column_prefs TEXT DEFAULT NULL');
+}
+
 const assetColumns = db.prepare('PRAGMA table_info(assets)').all().map((c) => c.name);
 if (!assetColumns.includes('ip_address')) {
   db.exec("ALTER TABLE assets ADD COLUMN ip_address TEXT DEFAULT ''");

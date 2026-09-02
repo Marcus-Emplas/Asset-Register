@@ -233,23 +233,35 @@ button, input, select { font-family: inherit; }
 }
 .btn-ghost:hover { color: var(--text); border-color: var(--text-faint); }
 
+.table-scroll { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-x: auto; }
+
 .table-header {
   flex-shrink: 0; display: grid;
-  grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 120px 108px 96px;
+  grid-template-columns: var(--cols, 32px 118px 96px 1fr 140px 128px 120px 120px 108px 96px);
   gap: 12px; padding: 9px 20px; border-bottom: 1px solid var(--border);
   font-size: 11px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.04em;
 }
 .table-header .sortable { cursor: pointer; }
 .table-header .sortable:hover { color: var(--text-dim); }
+.table-header > div { position: relative; }
 
 .table-body { flex: 1; overflow-y: auto; }
 
 .table-row {
-  display: grid; grid-template-columns: 32px 118px 96px 1fr 140px 128px 120px 120px 108px 96px;
+  display: grid; grid-template-columns: var(--cols, 32px 118px 96px 1fr 140px 128px 120px 120px 108px 96px);
   gap: 12px; align-items: center; padding: 11px 20px;
   border-bottom: 1px solid var(--bg-field); cursor: pointer; font-size: 12.5px;
 }
 .table-row:hover { background: #141A24; }
+
+.col-resize-handle {
+  position: absolute; top: 0; right: -6px; bottom: 0; width: 12px; cursor: col-resize; z-index: 4;
+}
+.col-resize-handle::after {
+  content: ''; position: absolute; top: 2px; bottom: 2px; left: 5px; width: 2px;
+  border-radius: 1px; background: transparent;
+}
+.col-resize-handle:hover::after, .col-resize-handle.resizing::after { background: var(--accent); }
 
 .cell-mono { font-family: var(--mono); color: var(--text); }
 .cell-dim { color: var(--text-dim); }
@@ -433,7 +445,7 @@ textarea.form-input { font-family: var(--sans); resize: vertical; min-height: 70
 .import-row-error .import-row-msg { color: var(--red); }
 
 .users-row {
-  display: grid; grid-template-columns: 1fr 130px 120px 100px 260px;
+  display: grid; grid-template-columns: var(--cols, 1fr 130px 120px 100px 260px);
   gap: 12px; align-items: center; padding: 10px 0;
   border-bottom: 1px solid var(--bg-field); font-size: 12.5px;
 }
@@ -442,5 +454,6 @@ textarea.form-input { font-family: var(--sans); resize: vertical; min-height: 70
   font-size: 11px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.04em;
   padding-bottom: 8px; border-bottom: 1px solid var(--border);
 }
+.users-header > div { position: relative; }
 .users-row-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .users-row-btn { padding: 5px 10px; font-size: 11.5px; }

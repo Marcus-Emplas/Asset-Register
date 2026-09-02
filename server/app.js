@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const session = require('express-session');
 const SqliteSessionStore = require('./lib/sqliteSessionStore');
 
+const db = require('./db/db');
 const { attachCurrentUser, requireAuth } = require('./middleware/auth');
 const authRoutes = require('./routes/auth.routes');
 const assetsRoutes = require('./routes/assets.routes');
@@ -63,7 +64,10 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/api/auth', authRoutes);
 
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json(req.user);
+  const row = db.prepare('SELECT column_prefs FROM users WHERE id = ?').get(req.user.id);
+  let columnPrefs = {};
+  try { columnPrefs = row && row.column_prefs ? JSON.parse(row.column_prefs) : {}; } catch (e) { columnPrefs = {}; }
+  res.json({ ...req.user, columnPrefs });
 });
 
 app.use('/api/assets', requireAuth, assetsRoutes);
