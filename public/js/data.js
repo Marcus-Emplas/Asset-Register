@@ -1,5 +1,5 @@
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch', 'Scanner', 'Scan Gun', 'Docking Station', 'Access Point'];
-const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
+const LOCATIONS = ['On Site', 'WFH'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
 const COMPANIES = ['Emplas', 'T&K', 'Acorn Aluminium', 'EVA CRM', 'Emplas Commercial North', 'Padiham Glass', 'GlazeReach'];
 const STATUSES = ['In Use', 'In Stock', 'In Repair', 'Retired'];
@@ -217,7 +217,7 @@ function parseCsv(text) {
     });
 }
 function freshForm() {
-  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'London HQ', company: '', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
+  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'On Site', company: '', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
 }
 function freshSimForm() {
   return { phoneNumber: '', carrier: '', plan: '', iccid: '' };

@@ -3,7 +3,7 @@ const db = require('./db');
 const { validatePasswordPolicy } = require('../lib/password');
 
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch', 'Scanner', 'Scan Gun', 'Docking Station', 'Access Point'];
-const LOCATIONS = ['London HQ', 'Manchester Office', 'Dublin Office', 'New York Office', 'Singapore Office', 'Remote - UK', 'Remote - US', 'Warehouse - Reading'];
+const LOCATIONS = ['On Site', 'WFH'];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
 const TODAY_ISO = new Date().toISOString().slice(0, 10);
 const TODAY = new Date(TODAY_ISO + 'T00:00:00');
