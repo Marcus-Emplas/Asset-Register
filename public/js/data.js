@@ -183,6 +183,43 @@ function buildCsv(rows) {
   const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'company', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
   return buildCsvForFields(rows, cols);
 }
+function normalizeCsvHeaderKey(h) {
+  return String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+// Maps a CSV header cell to the internal camelCase field it means, so a
+// spreadsheet exported with human-readable columns ("Asset Tag", "Item
+// Type", "Serial No.") still imports instead of failing every row with
+// "required" errors because the raw header didn't literally say "assetTag".
+// Matching is case/space/punctuation-insensitive. Unrecognized headers pass
+// through unchanged (and are just ignored downstream, same as before).
+const CSV_HEADER_FIELD_MAP = (() => {
+  const map = {};
+  ASSET_FIELD_OPTIONS.forEach((f) => {
+    map[normalizeCsvHeaderKey(f.value)] = f.value;
+    map[normalizeCsvHeaderKey(f.label)] = f.value;
+  });
+  const aliases = {
+    tag: 'assetTag', assettagno: 'assetTag', assetnumber: 'assetTag', assetid: 'assetTag',
+    type: 'itemType', category: 'itemType', devicetype: 'itemType',
+    serial: 'serialNumber', serialno: 'serialNumber', sn: 'serialNumber',
+    ip: 'ipAddress', ipaddr: 'ipAddress',
+    mac: 'macAddress',
+    tel: 'telephoneNumber', phone: 'telephoneNumber', phonenumber: 'telephoneNumber', mobilenumber: 'telephoneNumber',
+    po: 'poNumber', ponumber: 'poNumber', purchaseorder: 'poNumber', ponum: 'poNumber',
+    acquired: 'dateAcquired', purchasedate: 'dateAcquired', datepurchased: 'dateAcquired',
+    deployed: 'dateDeployed',
+    retired: 'dateRetired',
+    returned: 'returnDate', duedate: 'returnDate', returndue: 'returnDate',
+    blocked: 'deviceBlocked',
+    signed: 'agreementSigned',
+    firstname: 'firstName', assigneefirstname: 'firstName',
+    lastname: 'lastName', surname: 'lastName', assigneelastname: 'lastName',
+    wsus: 'wsusGroup', wsusgroup: 'wsusGroup',
+    express: 'expressTag', expresscode: 'expressTag',
+  };
+  Object.keys(aliases).forEach((k) => { if (!map[k]) map[k] = aliases[k]; });
+  return map;
+})();
 function parseCsv(text) {
   const rows = [];
   let row = [], field = '', inQuotes = false;
@@ -203,7 +240,10 @@ function parseCsv(text) {
   if (field.length || row.length) { row.push(field); rows.push(row); }
   if (!rows.length) return [];
 
-  const header = rows[0];
+  // Windows Excel commonly saves "CSV UTF-8" with a leading BOM, which would
+  // otherwise corrupt the first header's match.
+  if (rows[0][0]) rows[0][0] = rows[0][0].replace(/^﻿/, '');
+  const header = rows[0].map((h) => CSV_HEADER_FIELD_MAP[normalizeCsvHeaderKey(h)] || h);
   return rows.slice(1)
     .filter((r) => r.length > 1 || (r.length === 1 && r[0] !== ''))
     .map((r) => {
