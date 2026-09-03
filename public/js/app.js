@@ -175,7 +175,7 @@
         columnWidths: loadColumnWidths(),
         columnPrefs: {}, columnPickerTable: null,
         sidebarCollapsed: loadSidebarCollapsed(),
-        csvImport: { open: false, step: 'pick', fileName: '', rows: [] },
+        csvImport: { open: false, step: 'pick', fileName: '', rows: [], results: null },
         users: [], userForm: { email: '', password: '', role: 'standard' }, userFormErrors: {},
         accountForm: { currentPassword: '', newPassword: '', confirmPassword: '' }, accountFormErrors: {},
         simCards: [], simForm: freshSimForm(), simFormErrors: {},
@@ -908,18 +908,47 @@
       this.showToast('Deprecated CSV export started');
     }
 
-    openImport() { this.setState({ csvImport: { open: true, step: 'pick', fileName: '', rows: [] } }); }
-    closeImport() { this.setState({ csvImport: { open: false, step: 'pick', fileName: '', rows: [] } }); }
+    openImport() { this.setState({ csvImport: { open: true, step: 'pick', fileName: '', rows: [], results: null } }); }
+    closeImport() { this.setState({ csvImport: { open: false, step: 'pick', fileName: '', rows: [], results: null } }); }
 
-    validateImportRow(row, existingTags, seenTags) {
-      const errors = [];
-      const tag = (row.assetTag || '').trim();
-      if (!tag) errors.push('Asset tag is required');
-      else if (existingTags.has(tag)) errors.push('Asset tag already exists');
-      else if (seenTags.has(tag)) errors.push('Duplicate asset tag in file');
-      if (!(row.itemType || '').trim()) errors.push('Item type is required');
-      if (!(row.model || '').trim()) errors.push('Model is required');
-      return errors;
+    // Classifies one parsed CSV row into exactly one of:
+    //  - 'skip'   — its asset tag conflicts with an existing asset or another
+    //               row in this file. Never auto-fixed: silently renaming or
+    //               overwriting a tag is exactly the "creating new entries /
+    //               changing tags" behavior this replaced. Reported, not imported.
+    //  - 'review' — still gets imported (a blank required field gets a
+    //               generated placeholder / "Unknown" so the DB constraints
+    //               are satisfied), but is flagged so nothing gets silently
+    //               absorbed into the register without the user seeing it —
+    //               including a value that doesn't match the app's existing
+    //               Item Type / Location / Supplier lists.
+    //  - 'ok'     — clean, no flags.
+    classifyImportRow(row, existingTags, seenTags, nextPlaceholderTag) {
+      let assetTag = (row.assetTag || '').trim();
+      if (assetTag && existingTags.has(assetTag)) {
+        return { ...row, assetTag, _status: 'skip', _reasons: ['Asset tag already exists in the register'] };
+      }
+      if (assetTag && seenTags.has(assetTag)) {
+        return { ...row, assetTag, _status: 'skip', _reasons: ['Duplicate asset tag elsewhere in this file'] };
+      }
+
+      const reasons = [];
+      if (!assetTag) { assetTag = nextPlaceholderTag(); reasons.push('Asset tag was missing — placeholder assigned'); }
+
+      let itemType = (row.itemType || '').trim();
+      if (!itemType) { itemType = 'Unknown'; reasons.push('Item type was missing — set to Unknown'); }
+      else if (!ITEM_TYPES.includes(itemType)) { reasons.push(`Item type "${itemType}" isn't in the standard list`); }
+
+      let model = (row.model || '').trim();
+      if (!model) { model = 'Unknown'; reasons.push('Model was missing — set to Unknown'); }
+
+      const location = (row.location || '').trim();
+      if (location && !LOCATIONS.includes(location)) reasons.push(`Location "${location}" isn't in the standard list`);
+      const supplier = (row.supplier || '').trim();
+      if (supplier && !SUPPLIERS.includes(supplier)) reasons.push(`Supplier "${supplier}" isn't in the standard list`);
+
+      seenTags.add(assetTag);
+      return { ...row, assetTag, itemType, model, _status: reasons.length ? 'review' : 'ok', _reasons: reasons };
     }
 
     handleCsvFile(file) {
@@ -929,26 +958,44 @@
         const parsed = parseCsv(String(reader.result || ''));
         const existingTags = new Set(this.state.assets.map((a) => a.id));
         const seenTags = new Set();
-        const rows = parsed.map((row) => {
-          const errors = this.validateImportRow(row, existingTags, seenTags);
-          const tag = (row.assetTag || '').trim();
-          if (!errors.length) seenTags.add(tag);
-          return { ...row, _errors: errors };
-        });
-        this.setState({ csvImport: { open: true, step: 'preview', fileName: file.name, rows } });
+        let placeholderSeq = 0;
+        const nextPlaceholderTag = () => {
+          let tag;
+          do {
+            placeholderSeq += 1;
+            tag = `NEEDS-REVIEW-${String(placeholderSeq).padStart(4, '0')}`;
+          } while (existingTags.has(tag) || seenTags.has(tag));
+          return tag;
+        };
+        const rows = parsed.map((row) => this.classifyImportRow(row, existingTags, seenTags, nextPlaceholderTag));
+        this.setState({ csvImport: { open: true, step: 'preview', fileName: file.name, rows, results: null } });
       };
       reader.readAsText(file);
     }
 
     async confirmImport() {
-      const valid = this.state.csvImport.rows.filter((r) => !r._errors.length);
-      if (!valid.length) { this.showToast('No valid rows to import'); return; }
+      const rows = this.state.csvImport.rows;
+      const toImport = rows.filter((r) => r._status !== 'skip');
+      const skippedRows = rows.filter((r) => r._status === 'skip');
+      if (!toImport.length) { this.showToast('No rows to import'); return; }
       try {
-        const res = await Api.post('/api/assets/import', { rows: valid });
+        const res = await Api.post('/api/assets/import', { rows: toImport });
         await this.loadAssets();
-        this.closeImport();
-        const skippedCount = res.skipped ? res.skipped.length : 0;
-        this.showToast(`Imported ${res.inserted} assets${skippedCount ? `, ${skippedCount} skipped` : ''}`);
+        const serverSkipped = res.skipped || [];
+        const serverSkippedByIdx = new Map(serverSkipped.map((s) => [s.row, s.reason]));
+        const imported = [];
+        const review = [];
+        const skipped = skippedRows.map((r) => ({ assetTag: r.assetTag, reasons: r._reasons }));
+        toImport.forEach((r, i) => {
+          if (serverSkippedByIdx.has(i)) {
+            skipped.push({ assetTag: r.assetTag, reasons: [serverSkippedByIdx.get(i)] });
+          } else if (r._status === 'review') {
+            review.push({ assetTag: r.assetTag, reasons: r._reasons });
+          } else {
+            imported.push(r.assetTag);
+          }
+        });
+        this.setState({ csvImport: { open: true, step: 'results', fileName: this.state.csvImport.fileName, rows: [], results: { imported, review, skipped } } });
       } catch (e) {
         this.showToast('Import failed');
       }
@@ -2454,8 +2501,12 @@
   }
 
   function renderImportModal(csvImport) {
-    const validCount = csvImport.rows.filter((r) => !r._errors.length).length;
-    const errorCount = csvImport.rows.length - validCount;
+    if (csvImport.step === 'results') return renderImportResultsModal(csvImport.results);
+
+    const okCount = csvImport.rows.filter((r) => r._status === 'ok').length;
+    const reviewCount = csvImport.rows.filter((r) => r._status === 'review').length;
+    const skipCount = csvImport.rows.filter((r) => r._status === 'skip').length;
+    const importCount = okCount + reviewCount;
     return `
       <div class="modal-overlay" data-act="closeImport">
         <div class="modal-box" style="max-width:640px;" data-act="noop">
@@ -2469,27 +2520,70 @@
               <div class="form-label">CSV file</div>
               <input class="form-input" type="file" id="csvFileInput" accept=".csv">
             </div>
-            <div class="auth-hint">Expects the same columns as the Export CSV format (assetTag, itemType, model, serialNumber, ipAddress, status, location, firstName, lastName, supplier, poNumber, dateAcquired, dateDeployed, returnDate, dateRetired, deviceBlocked, agreementSigned).</div>
+            <div class="auth-hint">Column headers can be human-readable (e.g. "Asset Tag", "Item Type") or the exact Export CSV names. Rows missing a required field or using an unrecognized Item Type / Location / Supplier still import, but are flagged for review afterward — nothing is silently dropped or renamed.</div>
             <div class="modal-actions">
               <button class="btn-secondary" data-act="closeImport">Cancel</button>
             </div>
           ` : `
-            <div class="auth-hint">${escapeHtml(csvImport.fileName)} — <strong>${validCount}</strong> valid, <strong>${errorCount}</strong> ${errorCount === 1 ? 'error' : 'errors'} (errors will be skipped).</div>
+            <div class="auth-hint">${escapeHtml(csvImport.fileName)} — <strong>${okCount}</strong> ready, <strong>${reviewCount}</strong> ${reviewCount === 1 ? 'needs' : 'need'} review, <strong>${skipCount}</strong> ${skipCount === 1 ? 'will be' : 'will be'} skipped.</div>
             <div class="import-preview-table">
               ${csvImport.rows.map((row) => `
-                <div class="import-preview-row ${row._errors.length ? 'import-row-error' : ''}">
+                <div class="import-preview-row ${row._status === 'skip' ? 'import-row-error' : row._status === 'review' ? 'import-row-review' : ''}">
                   <div class="cell-mono">${escapeHtml(row.assetTag || '—')}</div>
                   <div class="cell-dim">${escapeHtml(row.itemType || '—')}</div>
                   <div class="cell-ellipsis">${escapeHtml(row.model || '—')}</div>
-                  <div class="import-row-msg">${row._errors.length ? escapeHtml(row._errors.join('; ')) : 'OK'}</div>
+                  <div class="import-row-msg">${row._reasons && row._reasons.length ? escapeHtml(row._reasons.join('; ')) : 'OK'}</div>
                 </div>
               `).join('')}
             </div>
             <div class="modal-actions">
               <button class="btn-secondary" data-act="closeImport">Cancel</button>
-              <button class="btn-submit" data-act="confirmImport" ${validCount ? '' : 'disabled'}>Import ${validCount} Assets</button>
+              <button class="btn-submit" data-act="confirmImport" ${importCount ? '' : 'disabled'}>Import ${importCount} Assets</button>
             </div>
           `}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderImportResultsModal(results) {
+    const { imported, review, skipped } = results;
+    return `
+      <div class="modal-overlay" data-act="closeImport">
+        <div class="modal-box" style="max-width:640px;" data-act="noop">
+          <div class="modal-header">
+            <div class="modal-title">Import Complete</div>
+            <div class="modal-close" data-act="closeImport">×</div>
+          </div>
+          <div class="auth-hint"><strong>${imported.length}</strong> imported cleanly, <strong>${review.length}</strong> imported but need review, <strong>${skipped.length}</strong> skipped.</div>
+
+          ${review.length ? `
+            <div class="drawer-section-title" style="margin-top:14px;">Needs Review (${review.length}) — imported, but check these</div>
+            <div class="import-preview-table">
+              ${review.map((r) => `
+                <div class="import-preview-row import-row-review" style="grid-template-columns:140px 1fr;">
+                  <div class="cell-mono">${escapeHtml(r.assetTag)}</div>
+                  <div class="import-row-msg">${escapeHtml(r.reasons.join('; '))}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          ${skipped.length ? `
+            <div class="drawer-section-title" style="margin-top:14px;">Skipped (${skipped.length}) — not imported</div>
+            <div class="import-preview-table">
+              ${skipped.map((r) => `
+                <div class="import-preview-row import-row-error" style="grid-template-columns:140px 1fr;">
+                  <div class="cell-mono">${escapeHtml(r.assetTag || '—')}</div>
+                  <div class="import-row-msg">${escapeHtml(r.reasons.join('; '))}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <div class="modal-actions" style="margin-top:14px;">
+            <button class="btn-submit" data-act="closeImport">Done</button>
+          </div>
         </div>
       </div>
     `;
