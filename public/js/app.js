@@ -66,6 +66,7 @@
     { key: 'carrier', label: 'CARRIER', width: 110, render: (sc) => `<div class="cell-dim">${escapeHtml(sc.carrier || '—')}</div>` },
     { key: 'plan', label: 'PLAN', width: 140, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.plan || '—')}</div>` },
     { key: 'assignedAssetTag', label: 'ASSIGNED TO', width: 200, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.assignedLabel)}</div>` },
+    { key: 'company', label: 'COMPANY', width: 130, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.company || '—')}</div>` },
     { key: 'status', label: 'STATUS', width: 110, render: (sc) => `<div><span class="status-pill" style="background:${tint(SIM_STATUS_COLORS[sc.status])};color:${SIM_STATUS_COLORS[sc.status]};">${escapeHtml(sc.status)}</span></div>` },
     { key: 'iccid', label: 'ICCID', width: 150, render: (sc) => `<div class="cell-mono cell-ellipsis">${escapeHtml(sc.iccid || '—')}</div>` },
     { key: 'notes', label: 'NOTES', width: 180, render: (sc) => `<div class="cell-dim cell-ellipsis">${escapeHtml(sc.notes || '—')}</div>` },
@@ -76,7 +77,7 @@
     assets: { defs: ASSET_COLUMN_DEFS, defaultColumns: ['assetTag', 'itemType', 'model', 'assignedTo', 'location', 'company', 'ipAddress', 'status', 'dateDeployed'] },
     deprecated: { defs: ASSET_COLUMN_DEFS, defaultColumns: ['assetTag', 'itemType', 'model', 'location', 'dateRetired'] },
     users: { defs: USER_COLUMN_DEFS, defaultColumns: ['email', 'role', 'mfaEnabled', 'active'] },
-    simCards: { defs: SIMCARD_COLUMN_DEFS, defaultColumns: ['phoneNumber', 'carrier', 'plan', 'assignedAssetTag', 'status'] },
+    simCards: { defs: SIMCARD_COLUMN_DEFS, defaultColumns: ['phoneNumber', 'carrier', 'plan', 'assignedAssetTag', 'company', 'status'] },
   };
   const COLUMN_MIN_WIDTH = 60;
   const COLUMN_WIDTHS_KEY = 'assetHub.columnWidths';
@@ -1176,6 +1177,7 @@
         currentUserId: st.currentUser ? st.currentUser.id : null,
         accountForm: st.accountForm, accountFormErrors: st.accountFormErrors,
         simCards: st.simCards, simForm: st.simForm, simFormErrors: st.simFormErrors,
+        allAssets: all,
         assignableMobiles: all.filter((a) => a.itemType === 'Mobile Phone' && a.status !== 'Retired'),
         availableSims: st.simCards.filter((sc) => sc.status === 'Available'),
         customReports: st.customReports,
@@ -2117,9 +2119,15 @@
           <input class="form-input mono" type="date" data-bind="detailForm.${field.key}" value="${escapeHtml(value)}">
         </div>`;
     }
+    // IP Address stays editable but also gets a link to open it directly —
+    // e.g. a printer's web admin portal — without needing to retire the
+    // asset first to see the read-only, linked version of this field.
+    const openLink = field.key === 'ipAddress' && value
+      ? `<a class="ip-link" href="http://${encodeURIComponent(value)}" target="_blank" rel="noopener noreferrer" style="float:right;">Open ↗</a>`
+      : '';
     return `
       <div class="form-group">
-        <div class="form-label">${escapeHtml(field.label)}</div>
+        <div class="form-label">${escapeHtml(field.label)}${openLink}</div>
         <input class="form-input${field.mono ? ' mono' : ''}" type="text" data-bind="detailForm.${field.key}" value="${escapeHtml(value)}" placeholder="—">
       </div>`;
   }
@@ -2414,8 +2422,12 @@
     const simCols = resolveVisibleColumns('simCards', vm.columnPrefs);
     const simDefsByKey = defsByKeyOf('simCards');
     const simRows = vm.simCards.map((sc) => {
-      const assignedAsset = sc.assignedAssetTag ? vm.assignableMobiles.find((a) => a.assetTag === sc.assignedAssetTag) : null;
-      return { ...sc, assignedLabel: sc.assignedAssetTag ? `${sc.assignedAssetTag}${assignedAsset && assignedAsset.firstName ? ' — ' + assignedAsset.firstName + ' ' + assignedAsset.lastName : ''}` : '—' };
+      const assignedAsset = sc.assignedAssetTag ? vm.allAssets.find((a) => a.assetTag === sc.assignedAssetTag) : null;
+      return {
+        ...sc,
+        assignedLabel: sc.assignedAssetTag ? `${sc.assignedAssetTag}${assignedAsset && assignedAsset.firstName ? ' — ' + assignedAsset.firstName + ' ' + assignedAsset.lastName : ''}` : '—',
+        company: assignedAsset ? assignedAsset.company : '',
+      };
     });
     return `
       <div class="screen-scroll">
