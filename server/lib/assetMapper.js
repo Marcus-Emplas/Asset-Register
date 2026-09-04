@@ -25,6 +25,8 @@ function rowToAsset(row, historyRows) {
     costTracked: !!row.cost_tracked,
     cost: row.cost,
     agreementSigned: !!row.agreement_signed,
+    wfh: !!row.wfh,
+    entraIntuneEnrolled: !!row.entra_intune_enrolled,
     supplier: row.supplier,
     status: row.status,
     history: (historyRows || []).map((h) => ({ date: h.date, text: h.text })),

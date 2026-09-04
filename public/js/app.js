@@ -31,7 +31,7 @@
     { key: 'itemType', label: 'TYPE', width: 100, render: (r) => `<div class="cell-dim">${escapeHtml(r.itemType)}</div>` },
     { key: 'model', label: 'MODEL', width: 240, render: (r) => `<div class="cell-ellipsis" style="color:#E8EDF3;">${escapeHtml(r.model)}</div>` },
     { key: 'assignedTo', label: 'ASSIGNED TO', width: 150, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.assigneeName)}</div>` },
-    { key: 'location', label: 'LOCATION', width: 130, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.location)}</div>` },
+    { key: 'location', label: 'DEPARTMENT', width: 130, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.location || '—')}</div>` },
     { key: 'company', label: 'COMPANY', width: 120, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.company || '—')}</div>` },
     { key: 'ipAddress', label: 'IP ADDRESS', width: 130, render: (r) => `<div class="cell-mono cell-ellipsis">${r.ipAddress ? `<a class="ip-link" href="http://${encodeURIComponent(r.ipAddress)}" target="_blank" rel="noopener noreferrer" data-act="noop">${escapeHtml(r.ipAddress)}</a>` : '<span class="cell-dim">—</span>'}</div>` },
     { key: 'status', label: 'STATUS', width: 110, sortAct: 'sortStatus', render: (r) => `<div><span class="status-pill" style="background:${r.statusBg};color:${r.statusColor};">${escapeHtml(r.status)}</span></div>` },
@@ -49,6 +49,8 @@
     { key: 'dateRetired', label: 'RETIRED', width: 100, render: (r) => `<div class="cell-deployed">${fmtDateTime(r.dateRetired)}</div>` },
     { key: 'notes', label: 'NOTES', width: 200, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.notes || '—')}</div>` },
     { key: 'agreementSigned', label: 'AGREEMENT', width: 100, render: (r) => `<div class="cell-dim">${fmtBool(r.agreementSigned)}</div>` },
+    { key: 'wfh', label: 'WFH', width: 80, render: (r) => `<div class="cell-dim">${fmtBool(r.wfh)}</div>` },
+    { key: 'entraIntuneEnrolled', label: 'ENTRA / INTUNE', width: 120, render: (r) => `<div class="cell-dim">${fmtBool(r.entraIntuneEnrolled)}</div>` },
     { key: 'supplier', label: 'SUPPLIER', width: 110, render: (r) => `<div class="cell-dim cell-ellipsis">${escapeHtml(r.supplier || '—')}</div>` },
     { key: 'cost', label: 'COST', width: 90, render: (r) => `<div class="cell-mono">${r.costTracked && r.cost !== null && r.cost !== undefined && r.cost !== '' ? '£' + escapeHtml(r.cost) : '—'}</div>` },
   ];
@@ -477,6 +479,7 @@
         supplier: f.supplier, poNumber: f.poNumber,
         dateAcquired: f.dateAcquired, dateDeployed: f.dateDeployed, returnDate: f.returnDate, dateRetired: f.dateRetired,
         firstName, lastName, location: f.location, agreementSigned: !!f.agreementSigned,
+        wfh: !!f.wfh, entraIntuneEnrolled: !!f.entraIntuneEnrolled,
         notes: f.notes,
       };
       if (isAdmin) {
@@ -921,15 +924,21 @@
     //               are satisfied), but is flagged so nothing gets silently
     //               absorbed into the register without the user seeing it —
     //               including a value that doesn't match the app's existing
-    //               Item Type / Location / Supplier lists.
+    //               Item Type / Supplier lists.
     //  - 'ok'     — clean, no flags.
+    // Department (location) is never read from the CSV at all — it's a
+    // curated list the register owns, not something a spreadsheet column
+    // gets to set. `location: undefined` here isn't a no-op: JSON.stringify
+    // drops undefined properties, so it guarantees the field is absent from
+    // the request body regardless of what the CSV had, on top of the server
+    // independently ignoring it for imports.
     classifyImportRow(row, existingTags, seenTags, nextPlaceholderTag) {
       let assetTag = (row.assetTag || '').trim();
       if (assetTag && existingTags.has(assetTag)) {
-        return { ...row, assetTag, _status: 'skip', _reasons: ['Asset tag already exists in the register'] };
+        return { ...row, assetTag, location: undefined, _status: 'skip', _reasons: ['Asset tag already exists in the register'] };
       }
       if (assetTag && seenTags.has(assetTag)) {
-        return { ...row, assetTag, _status: 'skip', _reasons: ['Duplicate asset tag elsewhere in this file'] };
+        return { ...row, assetTag, location: undefined, _status: 'skip', _reasons: ['Duplicate asset tag elsewhere in this file'] };
       }
 
       const reasons = [];
@@ -942,13 +951,11 @@
       let model = (row.model || '').trim();
       if (!model) { model = 'Unknown'; reasons.push('Model was missing — set to Unknown'); }
 
-      const location = (row.location || '').trim();
-      if (location && !LOCATIONS.includes(location)) reasons.push(`Location "${location}" isn't in the standard list`);
       const supplier = (row.supplier || '').trim();
       if (supplier && !SUPPLIERS.includes(supplier)) reasons.push(`Supplier "${supplier}" isn't in the standard list`);
 
       seenTags.add(assetTag);
-      return { ...row, assetTag, itemType, model, _status: reasons.length ? 'review' : 'ok', _reasons: reasons };
+      return { ...row, assetTag, itemType, model, location: undefined, _status: reasons.length ? 'review' : 'ok', _reasons: reasons };
     }
 
     handleCsvFile(file) {
@@ -1103,7 +1110,7 @@
       });
 
       const typeOptions = ['', ...ITEM_TYPES].map((t) => ({ value: t, label: t || 'All types' }));
-      const locationOptions = ['', ...LOCATIONS].map((l) => ({ value: l, label: l || 'All locations' }));
+      const locationOptions = ['', ...LOCATIONS].map((l) => ({ value: l, label: l || 'All departments' }));
 
       const deprecatedAssets = all.filter((a) => a.status === 'Retired');
       const depPct = (count) => (deprecatedAssets.length ? Math.round((count / deprecatedAssets.length) * 100) : 0);
@@ -1222,6 +1229,7 @@
         assignedName: asset.firstName ? `${asset.firstName} ${asset.lastName}` : '',
         location: asset.location, company: asset.company || '',
         deviceBlocked: asset.deviceBlocked, agreementSigned: asset.agreementSigned,
+        wfh: !!asset.wfh, entraIntuneEnrolled: !!asset.entraIntuneEnrolled,
         notes: asset.notes || '', costTracked: asset.costTracked,
         cost: asset.cost !== null && asset.cost !== undefined ? String(asset.cost) : '',
       };
@@ -1358,6 +1366,7 @@
           case 'flagRepair': this.flagRepair(id); break;
           case 'retireAsset': this.retireAsset(id); break;
           case 'submitAdd': this.submitAdd(); break;
+          case 'toggleFormField': this.updateFormField(el.getAttribute('data-field'), el.checked); break;
           case 'submitLogin': this.submitLogin(); break;
           case 'goForgotPassword': this.goForgotPassword(); break;
           case 'submitForgotPassword': this.submitForgotPassword(); break;
@@ -1384,6 +1393,7 @@
           case 'submitDetail': this.submitDetail(id); break;
           case 'unassignAsset': this.unassignAsset(id); break;
           case 'toggleCostTracked': this.toggleCostTracked(el.checked); break;
+          case 'toggleDetailField': this.updateDetailField(el.getAttribute('data-field'), el.checked); break;
           case 'goSimCards': this.goSimCards(); break;
           case 'submitCreateSim': this.submitCreateSim(); break;
           case 'unassignSim': this.unassignSim(id); break;
@@ -1766,7 +1776,7 @@
           <select class="select-field" data-bind="typeFilter">
             ${vm.typeOptions.map((opt) => `<option value="${escapeHtml(opt.value)}" ${opt.value === vm.typeFilter ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
           </select>
-          <div class="filter-heading spaced">LOCATION</div>
+          <div class="filter-heading spaced">DEPARTMENT</div>
           <select class="select-field" data-bind="locationFilter">
             ${vm.locationOptions.map((opt) => `<option value="${escapeHtml(opt.value)}" ${opt.value === vm.locationFilter ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
           </select>
@@ -1831,7 +1841,7 @@
         </div>
         <div class="grid-3">
           ${barPanel('By Type', vm.typeBars, '#4FA3F7', 'narrow')}
-          ${barPanel('By Location', vm.locationBars, '#F2B84B', 'wide')}
+          ${barPanel('By Department', vm.locationBars, '#F2B84B', 'wide')}
           ${barPanel('By Supplier', vm.supplierBars, '#8B7CF6', 'narrow')}
         </div>
         <div class="compliance-row">
@@ -1990,7 +2000,7 @@
         </div>
         <div class="grid-3">
           ${barPanel('By Type', vm.deprecatedTypeBars, '#4FA3F7', 'narrow')}
-          ${barPanel('By Location', vm.deprecatedLocationBars, '#F2B84B', 'wide')}
+          ${barPanel('By Department', vm.deprecatedLocationBars, '#F2B84B', 'wide')}
           ${barPanel('By Supplier', vm.deprecatedSupplierBars, '#8B7CF6', 'narrow')}
         </div>
         <div class="panel" style="margin-bottom:16px;">
@@ -2147,8 +2157,10 @@
         <div class="drawer-section">
           <div class="drawer-section-title">Assignment</div>
           <div class="drawer-field-row"><div class="drawer-field-label">Assigned To</div><div class="drawer-field-value">${escapeHtml(f.assignedName || '—')}</div></div>
-          <div class="drawer-field-row"><div class="drawer-field-label">Location</div><div class="drawer-field-value">${escapeHtml(f.location)}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Department</div><div class="drawer-field-value">${escapeHtml(f.location || '—')}</div></div>
           <div class="drawer-field-row"><div class="drawer-field-label">Company</div><div class="drawer-field-value">${escapeHtml(f.company || '—')}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">WFH</div><div class="drawer-field-value">${f.wfh ? 'Yes' : 'No'}</div></div>
+          <div class="drawer-field-row"><div class="drawer-field-label">Entra / Intune Enrolled</div><div class="drawer-field-value">${f.entraIntuneEnrolled ? 'Yes' : 'No'}</div></div>
           <div class="drawer-field-row"><div class="drawer-field-label">Device Blocked</div><div class="drawer-field-value">${f.deviceBlocked ? 'Yes' : 'No'}</div></div>
           <div class="drawer-field-row"><div class="drawer-field-label">Agreement Signed</div><div class="drawer-field-value">${f.agreementSigned ? 'Yes' : 'No'}</div></div>
         </div>
@@ -2166,10 +2178,11 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <div class="form-label">Location</div>
-            <select class="form-select" data-bind="detailForm.location">
-              ${LOCATIONS.map((l) => `<option value="${escapeHtml(l)}" ${l === f.location ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
-            </select>
+            <div class="form-label">Department</div>
+            <input class="form-input" type="text" list="department-list" data-bind="detailForm.location" value="${escapeHtml(f.location)}" placeholder="Type or pick a department…">
+            <datalist id="department-list">
+              ${LOCATIONS.map((l) => `<option value="${escapeHtml(l)}"></option>`).join('')}
+            </datalist>
           </div>
           <div class="form-group">
             <div class="form-label">Company</div>
@@ -2180,6 +2193,16 @@
               </select>
             ` : `<div class="drawer-field-value" style="padding-top:9px;">${escapeHtml(f.company || '—')} <span class="cell-dim" style="font-size:11px;">(admin only)</span></div>`}
           </div>
+        </div>
+        <div class="form-row" style="align-items:center;margin-bottom:12px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;">
+            <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleDetailField" data-field="wfh" ${f.wfh ? 'checked' : ''}>
+            WFH
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;">
+            <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleDetailField" data-field="entraIntuneEnrolled" ${f.entraIntuneEnrolled ? 'checked' : ''}>
+            Entra / Intune Enrolled
+          </label>
         </div>
         <div class="form-row" style="margin-bottom:14px;">
           <div class="form-group">
@@ -2310,8 +2333,11 @@
               <input class="form-input mono" type="text" data-bind="form.serialNumber" value="${escapeHtml(form.serialNumber)}">
             </div>
             <div class="form-group">
-              <div class="form-label">Location</div>
-              <select class="form-select" data-bind="form.location">${opts(LOCATIONS, form.location)}</select>
+              <div class="form-label">Department</div>
+              <input class="form-input" type="text" list="department-list-add" data-bind="form.location" value="${escapeHtml(form.location)}" placeholder="Type or pick a department…">
+              <datalist id="department-list-add">
+                ${LOCATIONS.map((l) => `<option value="${escapeHtml(l)}"></option>`).join('')}
+              </datalist>
             </div>
           </div>
 
@@ -2324,6 +2350,17 @@
               </select>
             </div>
             <div class="form-group"></div>
+          </div>
+
+          <div class="form-row" style="align-items:center;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;">
+              <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleFormField" data-field="wfh" ${form.wfh ? 'checked' : ''}>
+              WFH
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);cursor:pointer;">
+              <input type="checkbox" style="accent-color:var(--accent);width:14px;height:14px;" data-act="toggleFormField" data-field="entraIntuneEnrolled" ${form.entraIntuneEnrolled ? 'checked' : ''}>
+              Entra / Intune Enrolled
+            </label>
           </div>
 
           <div class="form-row">
@@ -2520,7 +2557,7 @@
               <div class="form-label">CSV file</div>
               <input class="form-input" type="file" id="csvFileInput" accept=".csv">
             </div>
-            <div class="auth-hint">Column headers can be human-readable (e.g. "Asset Tag", "Item Type") or the exact Export CSV names. Rows missing a required field or using an unrecognized Item Type / Location / Supplier still import, but are flagged for review afterward — nothing is silently dropped or renamed.</div>
+            <div class="auth-hint">Column headers can be human-readable (e.g. "Asset Tag", "Item Type") or the exact Export CSV names. Rows missing a required field or using an unrecognized Item Type / Supplier still import, but are flagged for review afterward — nothing is silently dropped or renamed. Department is never set by import; assign it in the app afterward.</div>
             <div class="modal-actions">
               <button class="btn-secondary" data-act="closeImport">Cancel</button>
             </div>

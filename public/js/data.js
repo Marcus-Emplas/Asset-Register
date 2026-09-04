@@ -1,5 +1,21 @@
 const ITEM_TYPES = ['Laptop', 'Desktop', 'Mobile Phone', 'Tablet', 'Monitor', 'Server', 'Printer', 'Network Switch', 'Scanner', 'Scan Gun', 'Docking Station', 'Access Point'];
-const LOCATIONS = ['On Site', 'WFH'];
+// "Department" — kept as the internal name `LOCATIONS`/`location` (matches the
+// DB column and existing report/CSV field key) but relabeled "Department" in
+// the UI. WFH/on-site is tracked separately via the `wfh` checkbox, not as a
+// department value.
+const LOCATIONS = [
+  'Acorn', 'TKHI Kettering', 'IT', 'GlazeReach', 'Commercial', 'Director', 'Despatch', 'CSO',
+  'Processing', 'Kiosk 2', 'Goods In', 'Server Room', 'Production', 'Sales', 'Health and Safety',
+  'Kiosk 3', 'Accounts', 'Purchasing', 'Small Stores', 'IT - Server Room', 'Emplas 2', 'Glass Area',
+  'Shop Floor', 'Padiham Glass', 'Facilities', 'IT - Commercial North', 'ECN', 'CompDoors', 'Transport',
+  'Quality Control', 'Batching', 'End Of Line', 'H&S', 'Site B', 'Factory', 'Stores', 'Marketing',
+  'Emplas Site B', 'TKHI', 'SHEQ', 'Fire Frame (E2)', 'Production Meeting Room', 'Boardroom', 'EHS',
+  'T&K Wellingborough', 'Commercial North', 'Acorn Aluminium', 'Payroll', 'HR', 'Finance',
+  'HR / TRAINING', 'Technical', 'Directors', 'Reception', 'EVA CRM', 'CompDoor', 'IT OOH',
+  'Sales & Marketing', 'Sales - on road', 'TKHI Wellingborough', 'IT Stock', 'Training Coordinator',
+  'T&K Kettering', 'Commercial AfterCare', 'Emplas', 'Yard', 'QC', 'Sales SB', 'STORAGE',
+  'Executive Assistant', 'Site B Accounts', 'SectionA', 'SectionB', 'Padiham', 'Glass Shed',
+];
 const SUPPLIERS = ['Dell', 'Insight', 'CDW', 'Apple', 'Misco', 'SoftwareONE', 'Cisco', 'Computacenter'];
 const COMPANIES = ['Emplas', 'T&K', 'Acorn Aluminium', 'EVA CRM', 'Emplas Commercial North', 'Padiham Glass', 'GlazeReach'];
 const STATUSES = ['In Use', 'In Stock', 'In Repair', 'Retired'];
@@ -153,7 +169,7 @@ const ASSET_FIELD_OPTIONS = [
   { value: 'telephoneNumber', label: 'Telephone' },
   { value: 'poNumber', label: 'PO Number' },
   { value: 'deviceBlocked', label: 'Device Blocked' },
-  { value: 'location', label: 'Location' },
+  { value: 'location', label: 'Department' },
   { value: 'company', label: 'Company' },
   { value: 'firstName', label: 'Assignee First Name' },
   { value: 'lastName', label: 'Assignee Last Name' },
@@ -163,6 +179,8 @@ const ASSET_FIELD_OPTIONS = [
   { value: 'dateRetired', label: 'Date Retired' },
   { value: 'notes', label: 'Notes' },
   { value: 'agreementSigned', label: 'Agreement Signed' },
+  { value: 'wfh', label: 'WFH' },
+  { value: 'entraIntuneEnrolled', label: 'Entra / Intune Enrolled' },
   { value: 'supplier', label: 'Supplier' },
   { value: 'status', label: 'Status' },
 ];
@@ -180,7 +198,7 @@ function buildCsvForFields(rows, cols) {
   return [header, ...lines].join('\n');
 }
 function buildCsv(rows) {
-  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'company', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned'];
+  const cols = ['assetTag', 'itemType', 'model', 'serialNumber', 'ipAddress', 'status', 'location', 'company', 'firstName', 'lastName', 'supplier', 'poNumber', 'dateAcquired', 'dateDeployed', 'returnDate', 'dateRetired', 'deviceBlocked', 'agreementSigned', 'wfh', 'entraIntuneEnrolled'];
   return buildCsvForFields(rows, cols);
 }
 function normalizeCsvHeaderKey(h) {
@@ -257,7 +275,7 @@ function parseCsv(text) {
     });
 }
 function freshForm() {
-  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: 'On Site', company: '', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '' };
+  return { assetTag: '', itemType: 'Laptop', model: '', serialNumber: '', ipAddress: '', location: '', company: '', firstName: '', lastName: '', supplier: 'Dell', poNumber: '', dateAcquired: '', dateDeployed: '', simCardId: '', wfh: false, entraIntuneEnrolled: false };
 }
 function freshDetailForm() {
   return {
@@ -265,6 +283,7 @@ function freshDetailForm() {
     macAddress: '', ipAddress: '', imei: '', telephoneNumber: '', wsusGroup: '',
     supplier: '', poNumber: '', dateAcquired: '', dateDeployed: '', returnDate: '', dateRetired: '',
     assignedName: '', location: '', company: '', deviceBlocked: false, agreementSigned: false,
+    wfh: false, entraIntuneEnrolled: false,
     notes: '', costTracked: false, cost: '',
   };
 }

@@ -59,23 +59,25 @@ router.post('/', requireRole('admin'), (req, res) => {
       asset_tag, item_type, model, serial_number, express_tag, mac_address, ip_address, imei,
       wsus_group, telephone_number, po_number, device_blocked, location, company,
       first_name, last_name, date_acquired, date_deployed, return_date, date_retired,
-      notes, agreement_signed, supplier, status
+      notes, agreement_signed, wfh, entra_intune_enrolled, supplier, status
     ) VALUES (
       @assetTag, @itemType, @model, @serialNumber, '', '', @ipAddress, '',
       '', '', @poNumber, 0, @location, @company,
       @firstName, @lastName, @dateAcquired, @dateDeployed, '', '',
-      '', 0, @supplier, @status
+      '', 0, @wfh, @entraIntuneEnrolled, @supplier, @status
     )
   `).run({
     assetTag, itemType, model,
     serialNumber: (body.serialNumber || '').trim() || '—',
     ipAddress: (body.ipAddress || '').trim(),
     poNumber: (body.poNumber || '').trim() || '—',
-    location: body.location || 'London HQ',
+    location: (body.location || '').trim(),
     company: (body.company || '').trim(),
     firstName, lastName,
     dateAcquired: today,
     dateDeployed: firstName ? today : '',
+    wfh: body.wfh ? 1 : 0,
+    entraIntuneEnrolled: body.entraIntuneEnrolled ? 1 : 0,
     supplier, status,
   });
   addHistory(assetTag, today, `Received from ${supplier} — added to register`);
@@ -165,16 +167,19 @@ router.post('/import', requireRole('admin'), (req, res) => {
           notes, agreement_signed, supplier, status
         ) VALUES (
           @assetTag, @itemType, @model, @serialNumber, '', '', @ipAddress, '',
-          '', '', @poNumber, @deviceBlocked, @location, @company,
+          '', '', @poNumber, @deviceBlocked, '', @company,
           @firstName, @lastName, @dateAcquired, @dateDeployed, @returnDate, @dateRetired,
           '', @agreementSigned, @supplier, @status
         )
       `).run({
+        // department (location) is deliberately never taken from the import —
+        // it's a curated list the register owns, not something a spreadsheet
+        // column should be able to set or overwrite. Left blank; someone
+        // assigns it in the app afterward (surfaced via the "needs review" list).
         assetTag, itemType, model,
         serialNumber: (row.serialNumber || '').trim() || '—',
         ipAddress: (row.ipAddress || '').trim(),
         poNumber: (row.poNumber || '').trim() || '—',
-        location: row.location || 'London HQ',
         company: (row.company || '').trim(),
         firstName, lastName,
         dateAcquired: row.dateAcquired || today,
@@ -330,6 +335,14 @@ router.patch('/:id', (req, res) => {
 
   if (body.agreementSigned !== undefined) {
     updates.agreement_signed = body.agreementSigned ? 1 : 0;
+  }
+
+  if (body.wfh !== undefined) {
+    updates.wfh = body.wfh ? 1 : 0;
+  }
+
+  if (body.entraIntuneEnrolled !== undefined) {
+    updates.entra_intune_enrolled = body.entraIntuneEnrolled ? 1 : 0;
   }
 
   if (body.notes !== undefined) {

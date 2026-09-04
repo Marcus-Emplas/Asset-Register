@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS assets (
   cost_tracked     INTEGER NOT NULL DEFAULT 0,
   cost             REAL DEFAULT NULL,
   agreement_signed INTEGER NOT NULL DEFAULT 0,
+  wfh                    INTEGER NOT NULL DEFAULT 0,
+  entra_intune_enrolled  INTEGER NOT NULL DEFAULT 0,
   supplier         TEXT NOT NULL,
   status           TEXT NOT NULL CHECK (status IN ('In Use','In Stock','In Repair','Retired')),
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),

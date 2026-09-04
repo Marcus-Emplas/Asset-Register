@@ -40,5 +40,11 @@ if (!assetColumns.includes('cost_tracked')) {
 if (!assetColumns.includes('cost')) {
   db.exec('ALTER TABLE assets ADD COLUMN cost REAL DEFAULT NULL');
 }
+if (!assetColumns.includes('wfh')) {
+  db.exec('ALTER TABLE assets ADD COLUMN wfh INTEGER NOT NULL DEFAULT 0');
+}
+if (!assetColumns.includes('entra_intune_enrolled')) {
+  db.exec('ALTER TABLE assets ADD COLUMN entra_intune_enrolled INTEGER NOT NULL DEFAULT 0');
+}
 
 module.exports = db;
